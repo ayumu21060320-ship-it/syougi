@@ -1,10 +1,11 @@
 // 立体将棋の画面と操作。シーンを再生すると自動で起動する（シーンに何も置かなくてよい）
-//   左クリック: 駒を選ぶ・指す / 右ドラッグ: 盤を回す / ホイール: 拡大縮小 / ↑↓キー: 見る層を変える
+//   PC:     左クリック: 駒を選ぶ・指す / 右ドラッグ: 盤を回す / ホイール: 拡大縮小 / ↑↓キー: 見る層を変える
+//   スマホ: タップ: 駒を選ぶ・指す / 1 本指ドラッグ: 盤を回す / 2 本指: 拡大縮小
+// 画面が縦長（スマホの縦画面）なら、上に 3D の盤、下にパネルを並べる。ブラウザ（WebGL）でも動く
 // 駒は各層に寝かせて置く（表が上。先手の駒は奥向き、後手の駒は手前向き）
 
 using System.Collections;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -44,7 +45,8 @@ public class ShogiGame : MonoBehaviour
     int selectedFrom = -1;
     PieceType selectedDrop = PieceType.None;
     string result;
-    Task<Move?> cpuTask;
+    ShogiAI.Search cpuSearch; // CPU が考えている途中（毎フレーム少しずつ考える）
+    const long CpuBudgetMs = 12; // 1 フレームに CPU が考える時間
     int gameId;
     int mode;        // 0 = CPU（あなたが先手）, 1 = CPU（あなたが後手）, 2 = 2人
     int level = 2;   // 1..3
@@ -83,6 +85,10 @@ public class ShogiGame : MonoBehaviour
 
     // ---- UI ----
     Text statusText, kifuText, modeText, levelText, layerText, focusText, bgmText;
+    CanvasScaler scaler;
+    RectTransform leftPanel, rightPanel;
+    GameObject helpText, kifuTitle;
+    int layoutPortrait = -1; // 今の並べ方（1 = 縦画面、0 = 横画面、-1 = まだ）
     // 右の 2D の盤（見ている層を普通の将棋盤の形で表示する。クリックでも指せる）
     const float BoardCell = 44f;
     Text layerBoardTitle;
@@ -109,7 +115,11 @@ public class ShogiGame : MonoBehaviour
             light.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
         }
 
-        font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
+        // UI の文字のフォント。Assets/Resources/UIFont/ に日本語フォント（Noto Sans JP など）を置けばそれを使う。
+        // ブラウザ（WebGL）版では PC のフォントが使えないので、置かないと文字が表示されない
+        var uiFonts = Resources.LoadAll<Font>("UIFont");
+        font = uiFonts.Length > 0 ? uiFonts[0]
+             : Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
         font.RequestCharactersInTexture("0123456789層", 64);
 
         // 駒の文字のフォント。Assets/Resources/Fonts/ に .ttf / .otf を置くと、それを使う（名前は何でもよい。
@@ -139,6 +149,7 @@ public class ShogiGame : MonoBehaviour
         BuildBoardFrame();
         BuildMarkers();
         pieceRoot = new GameObject("Pieces").transform;
+        UnityEngine.InputSystem.EnhancedTouch.EnhancedTouchSupport.Enable();
         BuildUI();
         SetupSound();
         NewGame();
@@ -370,13 +381,13 @@ public class ShogiGame : MonoBehaviour
 
     static string SideName(int side)
     {
-        return side == 0 ? "☗先手" : "☖後手";
+        return side == 0 ? "▲先手" : "△後手"; // ☗☖ は入っていないフォントが多いので ▲△ にする
     }
 
     void NewGame()
     {
         gameId++;
-        cpuTask = null;
+        cpuSearch = null;
         state = ShogiState.Initial();
         history.Clear();
         positionCount.Clear();
@@ -400,7 +411,7 @@ public class ShogiGame : MonoBehaviour
 
     bool HumanCanMove()
     {
-        return result == null && cpuTask == null && pendingPromotion == null && !animating && state.Turn != CpuSide();
+        return result == null && cpuSearch == null && pendingPromotion == null && !animating && state.Turn != CpuSide();
     }
 
     List<Move> MovesForSelection()
@@ -594,7 +605,7 @@ public class ShogiGame : MonoBehaviour
         var snapshot = state.Clone();
         int lv = level;
         int seed = Random.Range(0, int.MaxValue);
-        cpuTask = Task.Run(() => ShogiAI.ChooseMove(snapshot, lv, seed));
+        cpuSearch = new ShogiAI.Search(snapshot, lv, seed);
         Refresh();
     }
 
@@ -609,7 +620,7 @@ public class ShogiGame : MonoBehaviour
 
     void OnUndo()
     {
-        if (cpuTask != null || animating || history.Count == 0) return;
+        if (cpuSearch != null || animating || history.Count == 0) return;
         gameId++;
         UndoOne();
         if (state.Turn == CpuSide() && history.Count > 0) UndoOne(); // CPU 対局では自分の手番まで戻す
@@ -622,7 +633,7 @@ public class ShogiGame : MonoBehaviour
 
     void OnResign()
     {
-        if (result != null || cpuTask != null) return;
+        if (result != null || cpuSearch != null) return;
         result = SideName(state.Turn) + "の投了。" + SideName(state.Turn ^ 1) + "の勝ち";
         ClearSelection();
         Refresh();
@@ -632,16 +643,21 @@ public class ShogiGame : MonoBehaviour
 
     void Update()
     {
-        if (cpuTask != null && cpuTask.IsCompleted && !animating)
+        if (cpuSearch != null && !animating && cpuSearch.Step(CpuBudgetMs))
         {
-            var task = cpuTask;
-            cpuTask = null;
-            if (task.Status == TaskStatus.RanToCompletion && task.Result.HasValue) Play(task.Result.Value);
+            var search = cpuSearch;
+            cpuSearch = null;
+            if (search.Result.HasValue) Play(search.Result.Value);
             else Refresh();
         }
 
+        bool portrait = Screen.height > Screen.width;
+        if ((portrait ? 1 : 0) != layoutPortrait) ApplyLayout(portrait);
+
+        HandleTouch();
         var mouse = Mouse.current;
-        if (mouse != null)
+        // スマホのブラウザはタッチをマウスの操作としても送ってくるので、タッチの直後はマウスを無視する
+        if (mouse != null && Time.unscaledTime - lastTouchTime > 0.5f)
         {
             if (mouse.rightButton.isPressed || mouse.middleButton.isPressed)
             {
@@ -650,10 +666,10 @@ public class ShogiGame : MonoBehaviour
                 pitch = Mathf.Clamp(pitch - d.y * 0.3f, -80f, 85f);
             }
             float scroll = mouse.scroll.ReadValue().y;
-            if (Mathf.Abs(scroll) > 0.01f) distance = Mathf.Clamp(distance - Mathf.Sign(scroll) * 1.2f, 6f, 40f);
+            if (Mathf.Abs(scroll) > 0.01f) distance = Mathf.Clamp(distance - Mathf.Sign(scroll) * 1.2f, 6f, 45f);
 
-            bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-            if (mouse.leftButton.wasPressedThisFrame && !overUI) ClickBoard(mouse.position.ReadValue());
+            var pos = mouse.position.ReadValue();
+            if (mouse.leftButton.wasPressedThisFrame && !IsOverUI(pos)) ClickBoard(pos);
         }
 
         var kb = Keyboard.current;
@@ -662,6 +678,106 @@ public class ShogiGame : MonoBehaviour
             if (kb.upArrowKey.wasPressedThisFrame) ChangeLayer(1);
             if (kb.downArrowKey.wasPressedThisFrame) ChangeLayer(-1);
         }
+    }
+
+    // ---- タッチ操作 ----
+    const float TapMovePixels = 15f; // これより動いたらタップではなくドラッグ
+    Vector2 touchStart;
+    bool touchDragged, touchStartedOnUI;
+    float lastTouchTime = -10f;
+    float pinchDistance;
+    readonly List<RaycastResult> uiHits = new List<RaycastResult>();
+
+    void HandleTouch()
+    {
+        var touches = UnityEngine.InputSystem.EnhancedTouch.Touch.activeTouches;
+        if (touches.Count == 0)
+        {
+            pinchDistance = 0f;
+            return;
+        }
+        lastTouchTime = Time.unscaledTime;
+        float h = Mathf.Max(1, Screen.height);
+
+        if (touches.Count >= 2)
+        {
+            // 2 本指: 指の間が広がったら近づく、狭まったら離れる
+            float dist = Vector2.Distance(touches[0].screenPosition, touches[1].screenPosition);
+            if (pinchDistance > 0f) distance = Mathf.Clamp(distance - (dist - pinchDistance) / h * 30f, 6f, 45f);
+            pinchDistance = dist;
+            touchDragged = true; // 2 本指の操作の後に指を離しても、タップにはしない
+            return;
+        }
+        pinchDistance = 0f;
+
+        var t = touches[0];
+        switch (t.phase)
+        {
+            case UnityEngine.InputSystem.TouchPhase.Began:
+                touchStart = t.screenPosition;
+                touchDragged = false;
+                touchStartedOnUI = IsOverUI(t.screenPosition);
+                break;
+            case UnityEngine.InputSystem.TouchPhase.Moved:
+                if (touchStartedOnUI) break; // パネルの上で始まった操作は盤を回さない
+                if (!touchDragged && (t.screenPosition - touchStart).magnitude > TapMovePixels) touchDragged = true;
+                if (touchDragged)
+                {
+                    var d = t.delta;
+                    yaw += d.x / h * 300f;
+                    pitch = Mathf.Clamp(pitch - d.y / h * 300f, -80f, 85f);
+                }
+                break;
+            case UnityEngine.InputSystem.TouchPhase.Ended:
+                if (!touchDragged && !touchStartedOnUI) ClickBoard(t.screenPosition);
+                break;
+        }
+    }
+
+    // その位置にパネルやボタンがあるか
+    bool IsOverUI(Vector2 pos)
+    {
+        if (EventSystem.current == null) return false;
+        var ev = new PointerEventData(EventSystem.current) { position = pos };
+        uiHits.Clear();
+        EventSystem.current.RaycastAll(ev, uiHits);
+        return uiHits.Count > 0;
+    }
+
+    // ---- 縦画面・横画面の並べ方 ----
+    void ApplyLayout(bool portrait)
+    {
+        layoutPortrait = portrait ? 1 : 0;
+        if (portrait)
+        {
+            // 縦画面: 上に 3D の盤、下に左右 2 つのパネル。棋譜と操作の説明は場所が無いので隠す
+            scaler.referenceResolution = new Vector2(1080, 1920);
+            scaler.matchWidthOrHeight = 0f;
+            SetPanel(leftPanel, new Vector2(0, 0), new Vector2(12, 12), 520f, 1f);
+            SetPanel(rightPanel, new Vector2(1, 0), new Vector2(-12, 12), BoardCell * 9 + 64, 1.1f);
+            cam.rect = new Rect(0f, 0.36f, 1f, 0.64f);
+            distance = 24f;
+        }
+        else
+        {
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.matchWidthOrHeight = 0.5f;
+            SetPanel(leftPanel, new Vector2(0, 1), new Vector2(16, -16), 420f, 1f);
+            SetPanel(rightPanel, new Vector2(1, 1), new Vector2(-16, -16), BoardCell * 9 + 64, 1f);
+            cam.rect = new Rect(0f, 0f, 1f, 1f);
+            distance = 20f;
+        }
+        helpText.SetActive(!portrait);
+        kifuTitle.SetActive(!portrait);
+        kifuText.gameObject.SetActive(!portrait);
+    }
+
+    static void SetPanel(RectTransform rt, Vector2 corner, Vector2 offset, float width, float scale)
+    {
+        rt.anchorMin = rt.anchorMax = rt.pivot = corner;
+        rt.anchoredPosition = offset;
+        rt.sizeDelta = new Vector2(width, rt.sizeDelta.y);
+        rt.localScale = Vector3.one * scale;
     }
 
     void LateUpdate()
@@ -844,7 +960,7 @@ public class ShogiGame : MonoBehaviour
         else
         {
             string s = SideName(state.Turn) + "の番です";
-            if (cpuTask != null) s = SideName(state.Turn) + "（CPU）が考えています…";
+            if (cpuSearch != null) s = SideName(state.Turn) + "（CPU）が考えています…";
             if (checkSq >= 0) s = "王手！ " + s;
             if (selectedFrom >= 0)
                 s += "\n選択中: " + ShogiState.SquareName(selectedFrom) + " " + ShogiState.PieceChar(state.Board[selectedFrom]);
@@ -897,7 +1013,7 @@ public class ShogiGame : MonoBehaviour
         var canvasGo = new GameObject("UI");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        var scaler = canvasGo.AddComponent<CanvasScaler>();
+        scaler = canvasGo.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080);
         scaler.matchWidthOrHeight = 0.5f;
@@ -905,6 +1021,7 @@ public class ShogiGame : MonoBehaviour
 
         // 左のパネル
         var left = MakePanel(canvasGo.transform, new Vector2(0, 1), new Vector2(16, -16), new Vector2(420, 0));
+        leftPanel = (RectTransform)left;
         MakeText(left, "立体将棋", 34, TextAnchor.MiddleLeft, 44);
         statusText = MakeText(left, "", 22, TextAnchor.UpperLeft, 64);
         var row1 = MakeRow(left);
@@ -919,20 +1036,21 @@ public class ShogiGame : MonoBehaviour
         MakeButton(row4, "▲", 50, () => ChangeLayer(1), Wood);
         focusText = MakeButton(MakeRow(left), "", 388, () => { focusOnly = !focusOnly; Refresh(); }, Wood);
         bgmText = MakeButton(MakeRow(left), "", 388, ToggleBgm, Wood);
-        MakeText(left, "☗先手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
+        MakeText(left, "▲先手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
         handRows[0] = MakeRow(left);
-        MakeText(left, "☖後手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
+        MakeText(left, "△後手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
         handRows[1] = MakeRow(left);
-        MakeText(left, "左クリック: 選ぶ・指す\n右ドラッグ: 回す　ホイール: 拡大縮小\n↑↓キー: 見る層を変える", 17, TextAnchor.UpperLeft, 72);
+        helpText = MakeText(left, "左クリック: 選ぶ・指す\n右ドラッグ: 回す　ホイール: 拡大縮小\n↑↓キー: 見る層を変える", 17, TextAnchor.UpperLeft, 72).gameObject;
 
         // 右のパネル（見ている層の 2D の盤と棋譜）
         var right = MakePanel(canvasGo.transform, new Vector2(1, 1), new Vector2(-16, -16), new Vector2(BoardCell * 9 + 64, 0));
+        rightPanel = (RectTransform)right;
         var titleRow = MakeRow(right);
         MakeButton(titleRow, "▼", 50, () => ChangeLayer(-1), Wood);
         layerBoardTitle = MakeText(titleRow, "", 24, TextAnchor.MiddleCenter, 40, 260);
         MakeButton(titleRow, "▲", 50, () => ChangeLayer(1), Wood);
         BuildLayerBoard(right);
-        MakeText(right, "棋譜", 22, TextAnchor.MiddleLeft, 30);
+        kifuTitle = MakeText(right, "棋譜", 22, TextAnchor.MiddleLeft, 30).gameObject;
         kifuText = MakeText(right, "", 17, TextAnchor.UpperLeft, 300);
 
         // 成りの確認

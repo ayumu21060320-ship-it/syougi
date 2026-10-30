@@ -10,8 +10,9 @@ Unity プロジェクトは `My project/` フォルダ。Git に入れるのは�
 
 ## コードの場所
 - `My project/Assets/Scripts/ShogiRules.cs` … 立体将棋のルール（Unity に依存しない C#）
-- `My project/Assets/Scripts/ShogiAI.cs` … CPU（Unity に依存しない。別スレッドで動かす）
+- `My project/Assets/Scripts/ShogiAI.cs` … CPU（Unity に依存しない。ブラウザでも動くよう、別スレッドは使わず毎フレーム少しずつ考える）
 - `My project/Assets/Scripts/ShogiGame.cs` … 画面と操作。シーンを再生すると自動で起動する（シーンに置く必要なし）
+  PC（マウス・横画面）とスマホのブラウザ（タッチ・縦画面）の両方で動かす。WebGL で使えない機能（別スレッド、PC のフォント）を使わない
 - ルールは `docs/決めたこと.md` の「立体将棋のルール」が正。コードを変えたらそちらも合わせる
 
 ## 毎回やること
