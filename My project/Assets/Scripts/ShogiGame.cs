@@ -306,11 +306,19 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 将棋の駒の形（五角形の板）。玉は大きく、歩は小さく
+    static float MeshScale(PieceType t)
+    {
+        return t == PieceType.King ? 1.0f : (t == PieceType.Rook || t == PieceType.Bishop) ? 0.95f :
+               (t == PieceType.Gold || t == PieceType.Silver) ? 0.9f : t == PieceType.Pawn ? 0.8f : 0.85f;
+    }
+
+    // 駒の形の高さ（駒のローカル座標）
+    static float MeshHeight(PieceType t) { return 0.72f * MeshScale(t) * PieceScale; }
+
     Mesh PieceMesh(PieceType t)
     {
         if (pieceMeshes.TryGetValue((int)t, out var cached)) return cached;
-        float s = t == PieceType.King ? 1.0f : (t == PieceType.Rook || t == PieceType.Bishop) ? 0.95f :
-                  (t == PieceType.Gold || t == PieceType.Silver) ? 0.9f : t == PieceType.Pawn ? 0.8f : 0.85f;
+        float s = MeshScale(t);
         var outline = new[]
         {
             new Vector2(-0.31f, -0.36f), new Vector2(0.31f, -0.36f), new Vector2(0.26f, 0.2f),
@@ -585,6 +593,55 @@ public class ShogiGame : MonoBehaviour
         cam.transform.rotation = rot;
         cam.transform.position = rot * new Vector3(0f, 0f, -distance);
         foreach (var t in billboards) t.rotation = cam.transform.rotation;
+        FitGlyphs();
+    }
+
+    // ---- 駒の絵のフォントを駒の形にぴったり合わせる ----
+    // 駒の絵（枠と文字）は 1 文字なので、作った文字の実際の大きさを測って、駒の形と同じ高さ・同じ中心にする。
+    // 測った結果は駒の種類ごとに覚えておき、2 枚目からはすぐ当てはめる
+    struct GlyphFit { public float Scale; public Vector2 Pos; }
+    readonly Dictionary<string, GlyphFit> glyphFits = new Dictionary<string, GlyphFit>();
+    readonly List<(TextMesh tm, Transform piece, PieceType type)> pendingGlyphs = new List<(TextMesh, Transform, PieceType)>();
+
+    void QueueGlyphFit(TextMesh tm, Transform piece, PieceType type)
+    {
+        if (glyphFits.TryGetValue(tm.text, out var fit)) ApplyGlyphFit(tm.transform, fit);
+        else pendingGlyphs.Add((tm, piece, type));
+    }
+
+    static void ApplyGlyphFit(Transform label, GlyphFit fit)
+    {
+        label.localScale = Vector3.one * fit.Scale;
+        label.localPosition = new Vector3(fit.Pos.x, fit.Pos.y, label.localPosition.z);
+    }
+
+    void FitGlyphs()
+    {
+        if (animating) return; // 動いている途中（成りの回転など）は正しく測れないので、止まってから測る
+        for (int k = pendingGlyphs.Count - 1; k >= 0; k--)
+        {
+            var (tm, piece, type) = pendingGlyphs[k];
+            if (tm == null || piece == null) { pendingGlyphs.RemoveAt(k); continue; }
+            if (glyphFits.TryGetValue(tm.text, out var known)) { ApplyGlyphFit(tm.transform, known); pendingGlyphs.RemoveAt(k); continue; }
+
+            var b = tm.GetComponent<MeshRenderer>().bounds;
+            if (b.size.sqrMagnitude < 1e-8f) continue; // まだ文字が作られていない。次のフレームで測る
+            var label = tm.transform;
+            // 駒のローカル座標での、文字の上下の端と中心
+            var lo = piece.InverseTransformPoint(b.min);
+            var hi = piece.InverseTransformPoint(b.max);
+            float height = Mathf.Abs(hi.y - lo.y);
+            var center = new Vector2((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
+            if (height < 1e-5f) continue;
+            float scale = label.localScale.x * MeshHeight(type) * 0.98f / height;
+            // 文字の原点（label の位置）を中心に拡大するので、拡大後に中心が駒の中心 (0, 0) に来るよう位置を決める
+            var origin = new Vector2(label.localPosition.x, label.localPosition.y);
+            float k2 = scale / label.localScale.x;
+            var fit = new GlyphFit { Scale = scale, Pos = -(center - origin) * k2 };
+            glyphFits[tm.text] = fit;
+            ApplyGlyphFit(label, fit);
+            pendingGlyphs.RemoveAt(k);
+        }
     }
 
     void ClickBoard(Vector2 screenPos)
@@ -699,6 +756,7 @@ public class ShogiGame : MonoBehaviour
         tm.text = PieceText(p);
         tm.color = Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
         label.GetComponent<MeshRenderer>().sharedMaterial = pieceTextMat;
+        if (pieceFontIsGlyph) QueueGlyphFit(tm, go.transform, type);
         return go.transform;
     }
 
