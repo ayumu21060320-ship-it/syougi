@@ -167,6 +167,9 @@ public class ShogiGame : MonoBehaviour
     void SetColor(Renderer r, Color c, Material mat = null)
     {
         r.sharedMaterial = mat != null ? mat : baseMat;
+        // 層が重なっているので、影があると下の層の駒が暗くなって見づらい。影は落とさず受けもしない
+        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        r.receiveShadows = false;
         r.GetPropertyBlock(mpb);
         mpb.SetColor("_BaseColor", c);
         mpb.SetColor("_Color", c);
