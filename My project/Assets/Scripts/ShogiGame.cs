@@ -94,6 +94,7 @@ public class ShogiGame : MonoBehaviour
     Text layerBoardTitle;
     readonly Image[] layerCells = new Image[81];
     readonly Text[] layerCellTexts = new Text[81];
+    readonly Image[] layerCellPieces = new Image[81]; // 駒の絵の画像を使うときの 2D の盤の駒
     static readonly Color BoardWood = new Color(0.93f, 0.78f, 0.52f);
     Transform[] handRows = new Transform[2];
     GameObject promoteDialog;
@@ -140,6 +141,18 @@ public class ShogiGame : MonoBehaviour
         pieceTextMat.mainTexture = pieceFont.material.mainTexture;
         Font.textureRebuilt += OnFontTextureRebuilt;
 
+        // 駒の絵の画像（Assets/Resources/KomaPieces.png）があれば、フォントの代わりにそれを駒に貼る。
+        // Web（WebGL）版では K'sShogiPieces のフォントが表示されなかったので、駒の絵をあらかじめ画像にしてある
+        komaAtlas = Resources.Load<Texture2D>("KomaPieces");
+        if (komaAtlas != null)
+        {
+            komaAtlasMat = new Material(textShader != null ? textShader : Shader.Find("Sprites/Default"));
+            komaAtlasMat.mainTexture = komaAtlas;
+            komaSprites = new Sprite[AtlasChars.Length];
+            for (int k = 0; k < AtlasChars.Length; k++)
+                komaSprites[k] = Sprite.Create(komaAtlas, AtlasRect(k), new Vector2(0.5f, 0.5f));
+        }
+
         // 不透明な物は専用シェーダー（Assets/Resources/ShogiSolid.shader）で描く。見つからなければプロジェクト既定のマテリアル
         var solidShader = Shader.Find("Shogi3D/Solid");
         if (solidShader != null) baseMat = new Material(solidShader);
@@ -164,6 +177,52 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    // ---- 駒の絵の画像（KomaPieces.png）----
+    // 1 枚の画像に 4×4 マス（1 マス 256 ピクセル）で、AtlasChars の順に駒の絵が並んでいる。
+    // 絵は白で描いてあり、色（黒・赤）は表示するときに付ける。絵の縦横比は AtlasAspects
+    const string AtlasChars = "ABCDEFGHISTVWXY"; // K'sShogiPieces での文字（PieceText と同じ割り当て）
+    static readonly float[] AtlasAspects = { 0.906f, 0.906f, 0.858f, 0.858f, 0.817f, 0.817f, 0.771f, 0.714f, 0.651f, 0.858f, 0.858f, 0.817f, 0.771f, 0.714f, 0.651f };
+    const int AtlasCell = 256, AtlasCols = 4, AtlasPad = 6;
+    Texture2D komaAtlas;
+    Material komaAtlasMat;
+    Sprite[] komaSprites;
+    readonly Dictionary<int, Mesh> atlasQuads = new Dictionary<int, Mesh>();
+
+    int AtlasIndex(int p) { return AtlasChars.IndexOf(GlyphChar(p)); }
+
+    // 画像の中の k 番目の絵の範囲（ピクセル。Unity の画像は左下が原点）
+    Rect AtlasRect(int k)
+    {
+        float h = AtlasCell - 2 * AtlasPad;
+        float w = h * AtlasAspects[k];
+        float x = (k % AtlasCols) * AtlasCell + (AtlasCell - w) * 0.5f;
+        float yTop = (k / AtlasCols) * AtlasCell + AtlasPad;
+        float y = komaAtlas.height - yTop - h;
+        return new Rect(x, y, w, h);
+    }
+
+    // 駒の面に貼る四角形（絵の高さを駒の形の高さに合わせる）
+    // 色は成り駒かどうかだけで決まり、成り駒は絵も別なので、絵と駒の種類ごとに 1 つ作って使い回す
+    Mesh AtlasQuad(int k, PieceType type, Color ink)
+    {
+        int key = k * 16 + (int)type;
+        if (atlasQuads.TryGetValue(key, out var m)) return m;
+        var r = AtlasRect(k);
+        float h = MeshHeight(type) * 0.98f, w = h * AtlasAspects[k];
+        float u0 = r.x / komaAtlas.width, u1 = (r.x + r.width) / komaAtlas.width;
+        float v0 = r.y / komaAtlas.height, v1 = (r.y + r.height) / komaAtlas.height;
+        m = new Mesh();
+        m.SetVertices(new List<Vector3> { new Vector3(-w / 2, -h / 2, 0), new Vector3(w / 2, -h / 2, 0), new Vector3(w / 2, h / 2, 0), new Vector3(-w / 2, h / 2, 0) });
+        m.SetUVs(0, new List<Vector2> { new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1) });
+        m.SetTriangles(new List<int> { 0, 2, 1, 0, 3, 2 }, 0);
+        m.SetColors(new List<Color> { ink, ink, ink, ink }); // 絵は白なので、頂点の色がそのまま絵の色になる
+        m.RecalculateBounds();
+        atlasQuads[key] = m;
+        return m;
+    }
+
+    static Color PieceInk(int p) { return Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black; }
+
     static bool CanDraw(Font f, char c)
     {
         f.RequestCharactersInTexture(c.ToString(), PieceFontSize);
@@ -187,19 +246,25 @@ public class ShogiGame : MonoBehaviour
     string PieceText(int p)
     {
         if (!pieceFontIsGlyph) return ShogiState.PieceChar(p);
+        return GlyphChar(p).ToString();
+    }
+
+    // K'sShogiPieces で、その駒の絵が入っている英字
+    static char GlyphChar(int p)
+    {
         bool pr = Piece.Promoted(p);
         switch (Piece.Type(p))
         {
-            case PieceType.King: return Piece.Owner(p) == 0 ? "B" : "A"; // 玉将・王将
-            case PieceType.Rook: return pr ? "S" : "C";
-            case PieceType.Bishop: return pr ? "T" : "D";
-            case PieceType.Gold: return "E";
-            case PieceType.Silver: return pr ? "V" : "F";
-            case PieceType.Knight: return pr ? "W" : "G";
-            case PieceType.Lance: return pr ? "X" : "H";
-            case PieceType.Pawn: return pr ? "Y" : "I";
+            case PieceType.King: return Piece.Owner(p) == 0 ? 'B' : 'A'; // 玉将・王将
+            case PieceType.Rook: return pr ? 'S' : 'C';
+            case PieceType.Bishop: return pr ? 'T' : 'D';
+            case PieceType.Gold: return 'E';
+            case PieceType.Silver: return pr ? 'V' : 'F';
+            case PieceType.Knight: return pr ? 'W' : 'G';
+            case PieceType.Lance: return pr ? 'X' : 'H';
+            case PieceType.Pawn: return pr ? 'Y' : 'I';
         }
-        return "";
+        return ' ';
     }
 
     // 駒用の書体はそれだけで太さがあるので、太字にするのは代わりの明朝のときだけ
@@ -950,6 +1015,18 @@ public class ShogiGame : MonoBehaviour
 
         var label = new GameObject("Char");
         label.transform.SetParent(go.transform, false);
+        if (komaAtlas != null)
+        {
+            // 駒の絵の画像を、駒の表の面に貼る
+            int ai = AtlasIndex(p);
+            label.transform.localPosition = new Vector3(0f, 0f, -PieceHalf - 0.005f);
+            label.AddComponent<MeshFilter>().sharedMesh = AtlasQuad(ai, type, PieceInk(p));
+            var qr = label.AddComponent<MeshRenderer>();
+            qr.sharedMaterial = komaAtlasMat;
+            qr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            qr.receiveShadows = false;
+            return go.transform;
+        }
         // 駒の絵のフォントは絵の中心が文字の中心に来るのでずらさない。漢字は少し下げると駒の中央に見える
         label.transform.localPosition = new Vector3(0f, pieceFontIsGlyph ? 0f : -0.04f * PieceScale, -PieceHalf - 0.005f);
         var tm = label.AddComponent<TextMesh>();
@@ -1155,6 +1232,21 @@ public class ShogiGame : MonoBehaviour
                 t.alignment = TextAnchor.MiddleCenter;
                 t.raycastTarget = false;
                 layerCellTexts[k] = t;
+
+                if (komaAtlas != null)
+                {
+                    var pg = new GameObject("Piece");
+                    pg.transform.SetParent(cell.transform, false);
+                    var prt = pg.AddComponent<RectTransform>();
+                    prt.anchorMin = Vector2.zero;
+                    prt.anchorMax = Vector2.one;
+                    prt.offsetMin = prt.offsetMax = new Vector2(0f, 0f);
+                    var pi = pg.AddComponent<Image>();
+                    pi.preserveAspect = true;
+                    pi.raycastTarget = false;
+                    pi.enabled = false;
+                    layerCellPieces[k] = pi;
+                }
             }
     }
 
@@ -1178,6 +1270,20 @@ public class ShogiGame : MonoBehaviour
                 if (i == selectedFrom) c = SelectedColor;
                 if (i == checkSq) c = CheckColor;
                 layerCells[k].color = c;
+
+                var pi = layerCellPieces[k];
+                if (pi != null)
+                {
+                    pi.enabled = p != 0;
+                    if (p != 0)
+                    {
+                        pi.sprite = komaSprites[AtlasIndex(p)];
+                        pi.color = PieceInk(p);
+                        pi.rectTransform.localRotation = Piece.Owner(p) == 1 ? Quaternion.Euler(0f, 0f, 180f) : Quaternion.identity;
+                    }
+                    layerCellTexts[k].text = "";
+                    continue;
+                }
 
                 var t = layerCellTexts[k];
                 t.text = p == 0 ? "" : PieceText(p);
