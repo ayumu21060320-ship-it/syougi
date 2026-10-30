@@ -4,7 +4,7 @@ Unity で作る将棋ゲーム。**1人で制作している。**
 目的・締切: <未定（個人制作か課題か、締切があれば日付）>
 
 ## エンジン
-Unity <版は未定。決まったら 6000.x.xfx のように書く>。決めた後は**版を上げない**（上げるときは本人に聞く）。
+Unity 6000.4.0f1。決めた後は**版を上げない**（上げるときは本人に聞く）。
 Unity プロジェクトは `My project/` フォルダ。Git に入れるのはその中の `Assets/` `Packages/` `ProjectSettings/` だけ
 （`Library/` `Temp/` `Logs/` `UserSettings/` などは Unity が自動で作るので `.gitignore` で除外）。
 
