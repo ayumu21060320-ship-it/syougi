@@ -8,6 +8,12 @@ Unity 6000.4.0f1。決めた後は**版を上げない**（上げるときは本
 Unity プロジェクトは `My project/` フォルダ。Git に入れるのはその中の `Assets/` `Packages/` `ProjectSettings/` だけ
 （`Library/` `Temp/` `Logs/` `UserSettings/` などは Unity が自動で作るので `.gitignore` で除外）。
 
+## コードの場所
+- `My project/Assets/Scripts/ShogiRules.cs` … 立体将棋のルール（Unity に依存しない C#）
+- `My project/Assets/Scripts/ShogiAI.cs` … CPU（Unity に依存しない。別スレッドで動かす）
+- `My project/Assets/Scripts/ShogiGame.cs` … 画面と操作。シーンを再生すると自動で起動する（シーンに置く必要なし）
+- ルールは `docs/決めたこと.md` の「立体将棋のルール」が正。コードを変えたらそちらも合わせる
+
 ## 毎回やること
 - 作業を始めるとき: `git pull`。衝突したら、どちらを残すか本人に聞く（勝手に片方を消さない）
 - 作業を終えるとき: 変更の要約を1〜3行で見せ、本人の OK で commit → push
