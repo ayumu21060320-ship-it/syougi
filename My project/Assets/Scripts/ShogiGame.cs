@@ -59,6 +59,7 @@ public class ShogiGame : MonoBehaviour
     Font font;
     Material baseMat;
     Material glassMat; // 半透明
+    Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
     MaterialPropertyBlock mpb;
     Transform pieceRoot, gridRoot;
     TextMesh layerLabel;
@@ -93,8 +94,11 @@ public class ShogiGame : MonoBehaviour
 
         font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
         font.RequestCharactersInTexture("玉王飛角金銀桂香歩龍馬全圭杏と0123456789層", 64);
-        // 3D の文字が他の駒の向こう側から透けて見えないようにする
-        font.material.SetFloat("unity_GUIZTestMode", (float)UnityEngine.Rendering.CompareFunction.LessEqual);
+        // 駒の文字は専用シェーダー（Assets/Resources/ShogiPieceText.shader）で描き、手前の駒から透けないようにする
+        var textShader = Shader.Find("Shogi3D/PieceText");
+        pieceTextMat = textShader != null ? new Material(textShader) : font.material;
+        pieceTextMat.mainTexture = font.material.mainTexture;
+        Font.textureRebuilt += OnFontTextureRebuilt;
 
         var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
         baseMat = tmp.GetComponent<MeshRenderer>().sharedMaterial; // プロジェクト既定の（URP の）マテリアル
@@ -109,6 +113,17 @@ public class ShogiGame : MonoBehaviour
         pieceRoot = new GameObject("Pieces").transform;
         BuildUI();
         NewGame();
+    }
+
+    // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    void OnFontTextureRebuilt(Font f)
+    {
+        if (f == font && pieceTextMat != null) pieceTextMat.mainTexture = font.material.mainTexture;
+    }
+
+    void OnDestroy()
+    {
+        Font.textureRebuilt -= OnFontTextureRebuilt;
     }
 
     // ================= 盤の組み立て =================
@@ -566,7 +581,7 @@ public class ShogiGame : MonoBehaviour
             tm.alignment = TextAlignment.Center;
             tm.text = ShogiState.PieceChar(p);
             tm.color = Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
-            label.GetComponent<MeshRenderer>().sharedMaterial = font.material;
+            label.GetComponent<MeshRenderer>().sharedMaterial = pieceTextMat;
             pieceObjects.Add(go.transform);
         }
     }
