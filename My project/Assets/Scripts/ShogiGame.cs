@@ -75,6 +75,12 @@ public class ShogiGame : MonoBehaviour
 
     // ---- UI ----
     Text statusText, kifuText, modeText, levelText, layerText, focusText;
+    // 右の 2D の盤（見ている層を普通の将棋盤の形で表示する。クリックでも指せる）
+    const float BoardCell = 44f;
+    Text layerBoardTitle;
+    readonly Image[] layerCells = new Image[81];
+    readonly Text[] layerCellTexts = new Text[81];
+    static readonly Color BoardWood = new Color(0.93f, 0.78f, 0.52f);
     Transform[] handRows = new Transform[2];
     GameObject promoteDialog;
 
@@ -576,6 +582,7 @@ public class ShogiGame : MonoBehaviour
         }
 
         RefreshUI(checkSq);
+        RefreshLayerBoard(lastTo, checkSq);
     }
 
     void RebuildPieces(int lastTo, int checkSq)
@@ -681,7 +688,7 @@ public class ShogiGame : MonoBehaviour
         }
 
         var sb = new System.Text.StringBuilder();
-        int start = Mathf.Max(0, history.Count - 28);
+        int start = Mathf.Max(0, history.Count - 14);
         for (int k = start; k < history.Count; k++) sb.Append(k + 1).Append(". ").Append(history[k].text).Append('\n');
         kifuText.text = sb.ToString();
     }
@@ -727,10 +734,15 @@ public class ShogiGame : MonoBehaviour
         handRows[1] = MakeRow(left);
         MakeText(left, "左クリック: 選ぶ・指す\n右ドラッグ: 回す　ホイール: 拡大縮小\n↑↓キー: 見る層を変える", 17, TextAnchor.UpperLeft, 72);
 
-        // 右のパネル（棋譜）
-        var right = MakePanel(canvasGo.transform, new Vector2(1, 1), new Vector2(-16, -16), new Vector2(380, 0));
-        MakeText(right, "棋譜", 24, TextAnchor.MiddleLeft, 32);
-        kifuText = MakeText(right, "", 17, TextAnchor.UpperLeft, 760);
+        // 右のパネル（見ている層の 2D の盤と棋譜）
+        var right = MakePanel(canvasGo.transform, new Vector2(1, 1), new Vector2(-16, -16), new Vector2(BoardCell * 9 + 64, 0));
+        var titleRow = MakeRow(right);
+        MakeButton(titleRow, "▼", 50, () => ChangeLayer(-1), Wood);
+        layerBoardTitle = MakeText(titleRow, "", 24, TextAnchor.MiddleCenter, 40, 260);
+        MakeButton(titleRow, "▲", 50, () => ChangeLayer(1), Wood);
+        BuildLayerBoard(right);
+        MakeText(right, "棋譜", 22, TextAnchor.MiddleLeft, 30);
+        kifuText = MakeText(right, "", 17, TextAnchor.UpperLeft, 300);
 
         // 成りの確認
         promoteDialog = new GameObject("PromoteDialog");
@@ -750,6 +762,105 @@ public class ShogiGame : MonoBehaviour
         MakeButton(drow, "成る", 130, () => AnswerPromotion(true), Wood);
         MakeButton(drow, "成らない", 130, () => AnswerPromotion(false), Wood);
         promoteDialog.SetActive(false);
+    }
+
+    // 9×9 のマス目（上に筋の番号、右に段の漢数字）。普通の将棋盤と同じ向き
+    void BuildLayerBoard(Transform parent)
+    {
+        string[] kan = { "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+        const float labelH = 22f;
+        var box = new GameObject("LayerBoard");
+        box.transform.SetParent(parent, false);
+        box.AddComponent<RectTransform>();
+        var le = box.AddComponent<LayoutElement>();
+        le.minHeight = le.preferredHeight = BoardCell * 9 + labelH;
+
+        RectTransform Place(GameObject go, float x, float y, float w, float h)
+        {
+            go.transform.SetParent(box.transform, false);
+            var rt = go.GetComponent<RectTransform>();
+            if (rt == null) rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0, 1);
+            rt.anchoredPosition = new Vector2(x, -y);
+            rt.sizeDelta = new Vector2(w, h);
+            return rt;
+        }
+        Text Label(string text, int size, float x, float y, float w, float h)
+        {
+            var go = new GameObject("Label");
+            Place(go, x, y, w, h);
+            var t = go.AddComponent<Text>();
+            t.font = font;
+            t.fontSize = size;
+            t.alignment = TextAnchor.MiddleCenter;
+            t.color = new Color(0.3f, 0.25f, 0.2f);
+            t.text = text;
+            t.raycastTarget = false;
+            return t;
+        }
+
+        var bg = new GameObject("Board");
+        Place(bg, 0, labelH, BoardCell * 9, BoardCell * 9);
+        bg.AddComponent<Image>().color = new Color(0.35f, 0.25f, 0.12f); // マスのすき間が線に見える
+        for (int x = 0; x < 9; x++) Label((9 - x).ToString(), 15, x * BoardCell, 0, BoardCell, labelH);
+        for (int y = 0; y < 9; y++) Label(kan[y], 15, BoardCell * 9 + 2, labelH + y * BoardCell, 24, BoardCell);
+
+        for (int y = 0; y < 9; y++)
+            for (int x = 0; x < 9; x++)
+            {
+                int k = x + 9 * y;
+                var cell = new GameObject("Cell");
+                Place(cell, x * BoardCell + 1, labelH + y * BoardCell + 1, BoardCell - 2, BoardCell - 2);
+                var img = cell.AddComponent<Image>();
+                img.color = BoardWood;
+                var b = cell.AddComponent<Button>();
+                b.targetGraphic = img;
+                int cx = x, cy = y;
+                b.onClick.AddListener(() => OnCellClicked(ShogiState.Index(cx, cy, focusLayer)));
+                layerCells[k] = img;
+
+                var tg = new GameObject("Text");
+                tg.transform.SetParent(cell.transform, false);
+                var rt = tg.AddComponent<RectTransform>();
+                rt.anchorMin = Vector2.zero;
+                rt.anchorMax = Vector2.one;
+                rt.offsetMin = rt.offsetMax = Vector2.zero;
+                var t = tg.AddComponent<Text>();
+                t.font = font;
+                t.fontSize = 26;
+                t.alignment = TextAnchor.MiddleCenter;
+                t.raycastTarget = false;
+                layerCellTexts[k] = t;
+            }
+    }
+
+    void RefreshLayerBoard(int lastTo, int checkSq)
+    {
+        layerBoardTitle.text = (focusLayer + 1) + "層の盤面";
+        var targetColor = new Dictionary<int, Color>();
+        foreach (var m in MovesForSelection())
+            if (ShogiState.Z(m.To) == focusLayer)
+                targetColor[m.To] = state.Board[m.To] == 0 ? new Color(0.6f, 0.75f, 1f) : new Color(1f, 0.6f, 0.55f);
+
+        for (int y = 0; y < 9; y++)
+            for (int x = 0; x < 9; x++)
+            {
+                int i = ShogiState.Index(x, y, focusLayer);
+                int k = x + 9 * y;
+                int p = state.Board[i];
+                Color c = BoardWood;
+                if (i == lastTo) c = LastColor;
+                if (targetColor.TryGetValue(i, out var tc)) c = tc;
+                if (i == selectedFrom) c = SelectedColor;
+                if (i == checkSq) c = CheckColor;
+                layerCells[k].color = c;
+
+                var t = layerCellTexts[k];
+                t.text = p == 0 ? "" : ShogiState.PieceChar(p);
+                t.color = p != 0 && Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
+                // 後手の駒は逆さまに
+                t.rectTransform.localRotation = p != 0 && Piece.Owner(p) == 1 ? Quaternion.Euler(0f, 0f, 180f) : Quaternion.identity;
+            }
     }
 
     Transform MakePanel(Transform parent, Vector2 corner, Vector2 offset, Vector2 size)
