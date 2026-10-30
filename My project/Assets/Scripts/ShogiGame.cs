@@ -66,6 +66,8 @@ public class ShogiGame : MonoBehaviour
     Material baseMat;
     Material glassMat; // 半透明
     Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
+    AudioSource audioSource;
+    AudioClip komaSound;   // 駒を置く音
     MaterialPropertyBlock mpb;
     Transform pieceRoot, gridRoot;
     TextMesh layerLabel;
@@ -136,6 +138,7 @@ public class ShogiGame : MonoBehaviour
         BuildMarkers();
         pieceRoot = new GameObject("Pieces").transform;
         BuildUI();
+        SetupSound();
         NewGame();
     }
 
@@ -462,6 +465,50 @@ public class ShogiGame : MonoBehaviour
         StartCoroutine(AnimateMove(m, captured));
     }
 
+    // ================= 効果音 =================
+
+    // 駒を置く音。Assets/Resources/Sounds/ に音のファイル（.wav / .mp3 / .ogg）を置けばそれを使う（名前は何でもよい。
+    // 複数あれば KomaOto という名前のもの、無ければ最初の 1 つ）。無ければ木の駒を打つような音をその場で作る
+    void SetupSound()
+    {
+        if (FindAnyObjectByType<AudioListener>() == null) cam.gameObject.AddComponent<AudioListener>();
+        audioSource = gameObject.AddComponent<AudioSource>();
+        audioSource.playOnAwake = false;
+
+        var clips = Resources.LoadAll<AudioClip>("Sounds");
+        foreach (var c in clips) if (c.name == "KomaOto") komaSound = c;
+        if (komaSound == null && clips.Length > 0) komaSound = clips[0];
+        if (komaSound == null) komaSound = MakeKomaSound();
+    }
+
+    void PlayKomaSound(bool capture)
+    {
+        if (audioSource == null || komaSound == null) return;
+        audioSource.pitch = Random.Range(0.94f, 1.06f); // 毎回少しだけ音の高さを変えて、単調にしない
+        audioSource.PlayOneShot(komaSound, capture ? 1f : 0.75f); // 駒を取ったときは強めに
+    }
+
+    // 「パチッ」という短い音を作る（雑音の立ち上がり ＋ すぐ消える木の響き）
+    static AudioClip MakeKomaSound()
+    {
+        const int rate = 44100;
+        int n = (int)(rate * 0.18f);
+        var data = new float[n];
+        var rng = new System.Random(7);
+        for (int i = 0; i < n; i++)
+        {
+            float t = (float)i / rate;
+            float noise = (float)(rng.NextDouble() * 2.0 - 1.0) * Mathf.Exp(-t * 150f) * 0.6f;
+            float wood = Mathf.Sin(2f * Mathf.PI * 1850f * t) * Mathf.Exp(-t * 55f) * 0.5f
+                       + Mathf.Sin(2f * Mathf.PI * 3150f * t) * Mathf.Exp(-t * 90f) * 0.3f
+                       + Mathf.Sin(2f * Mathf.PI * 820f * t) * Mathf.Exp(-t * 35f) * 0.35f;
+            data[i] = Mathf.Clamp((noise + wood) * 0.8f, -1f, 1f);
+        }
+        var clip = AudioClip.Create("KomaOto", n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
     // ================= アニメーション =================
 
     const float MoveSeconds = 0.4f;
@@ -495,6 +542,7 @@ public class ShogiGame : MonoBehaviour
             piece.rotation = baseRot;
         }
         if (ghost != null) Destroy(ghost.gameObject);
+        PlayKomaSound(captured != 0);
         animating = false;
     }
 
