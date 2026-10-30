@@ -50,7 +50,7 @@ namespace Shogi3D
                 // 歩・銀・桂は前に出ているほど少し加点
                 var t = Piece.Type(p);
                 if (!Piece.Promoted(p) && (t == PieceType.Pawn || t == PieceType.Silver || t == PieceType.Knight))
-                    v += ShogiState.RelLayer(Piece.Owner(p), ShogiState.Z(i)) * 4;
+                    v += ShogiState.RelRank(Piece.Owner(p), ShogiState.Y(i)) * 4;
                 score += Piece.Owner(p) == 0 ? v : -v;
             }
             foreach (var t in ShogiState.HandTypes)
