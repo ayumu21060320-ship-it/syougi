@@ -59,8 +59,10 @@ public class ShogiGame : MonoBehaviour
     // ---- 表示 ----
     Camera cam;
     Font font;       // UI と番号の文字（ゴシック）
-    Font pieceFont;  // 駒の文字。Assets/Resources/Fonts/KomaFont（.ttf / .otf）があればそれ、無ければ太字の明朝
-    bool pieceFontIsCustom;
+    Font pieceFont;  // 駒の文字。Assets/Resources/Fonts/ に置いたフォント。無ければ太字の明朝
+    bool pieceFontIsCustom; // フォントを置いたか
+    bool pieceFontIsGlyph;  // 英字に駒の絵が入っているフォント（K'sShogiPieces など）か
+    const int PieceFontSize = 128; // 駒の文字を描く解像度。大きいほどくっきりする
     Material baseMat;
     Material glassMat; // 半透明
     Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
@@ -106,13 +108,16 @@ public class ShogiGame : MonoBehaviour
         font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
         font.RequestCharactersInTexture("0123456789層", 64);
 
-        // 駒の文字のフォント。駒用の書体（錦旗・水無瀬など）のフォントファイルを
-        // Assets/Resources/Fonts/KomaFont.ttf（または .otf）として置くと、それを使う
-        pieceFont = Resources.Load<Font>("Fonts/KomaFont");
+        // 駒の文字のフォント。Assets/Resources/Fonts/ に .ttf / .otf を置くと、それを使う（名前は何でもよい。
+        // 複数あるときは KomaFont という名前のもの、無ければ最初の 1 つ）。漢字の入ったフォントなら漢字で、
+        // 英字に駒の絵が入ったフォント（K'sShogiPieces など）なら駒の絵で描く
+        pieceFont = LoadPieceFont();
         pieceFontIsCustom = pieceFont != null;
+        pieceFontIsGlyph = pieceFontIsCustom && !pieceFont.HasCharacter('歩') && pieceFont.HasCharacter('I');
         if (!pieceFontIsCustom)
-            pieceFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Mincho", "YuMincho", "MS Mincho", "Yu Gothic" }, 64);
-        pieceFont.RequestCharactersInTexture(PieceChars, 64, PieceFontStyle);
+            pieceFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Mincho", "YuMincho", "MS Mincho", "Yu Gothic" }, PieceFontSize);
+        Debug.Log("駒のフォント: " + pieceFont.name + (pieceFontIsGlyph ? "（駒の絵）" : "（漢字）"));
+        pieceFont.RequestCharactersInTexture(PieceChars, PieceFontSize, PieceFontStyle);
         // 駒の文字は専用シェーダー（Assets/Resources/ShogiPieceText.shader）で描き、手前の駒から透けないようにする
         var textShader = Shader.Find("Shogi3D/PieceText");
         pieceTextMat = textShader != null ? new Material(textShader) : pieceFont.material;
@@ -135,15 +140,23 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    static Font LoadPieceFont()
+    {
+        var fonts = Resources.LoadAll<Font>("Fonts");
+        if (fonts.Length == 0) return null;
+        foreach (var f in fonts) if (f.name == "KomaFont") return f;
+        return fonts[0];
+    }
+
     const string PieceCharsKanji = "玉王飛角金銀桂香歩龍馬全圭杏と";
     // 駒の絵のフォント（K'sShogiPieces）は、英大文字 1 文字に駒の絵（枠と文字）が 1 枚入っている
     const string PieceCharsGlyph = "ABCDEFGHISTVWXY";
-    string PieceChars => pieceFontIsCustom ? PieceCharsGlyph : PieceCharsKanji;
+    string PieceChars => pieceFontIsGlyph ? PieceCharsGlyph : PieceCharsKanji;
 
     // 駒に表示する文字。駒の絵のフォントでは、その駒の絵が入っている英字にする
     string PieceText(int p)
     {
-        if (!pieceFontIsCustom) return ShogiState.PieceChar(p);
+        if (!pieceFontIsGlyph) return ShogiState.PieceChar(p);
         bool pr = Piece.Promoted(p);
         switch (Piece.Type(p))
         {
@@ -673,13 +686,14 @@ public class ShogiGame : MonoBehaviour
         var label = new GameObject("Char");
         label.transform.SetParent(go.transform, false);
         // 駒の絵のフォントは絵の中心が文字の中心に来るのでずらさない。漢字は少し下げると駒の中央に見える
-        label.transform.localPosition = new Vector3(0f, pieceFontIsCustom ? 0f : -0.04f * PieceScale, -PieceHalf - 0.005f);
+        label.transform.localPosition = new Vector3(0f, pieceFontIsGlyph ? 0f : -0.04f * PieceScale, -PieceHalf - 0.005f);
         var tm = label.AddComponent<TextMesh>();
         tm.font = pieceFont;
         tm.fontStyle = PieceFontStyle;
-        tm.fontSize = 64;
+        tm.fontSize = PieceFontSize;
         // 駒の絵は駒の種類ごとに大きさが描き分けてあるので、全部同じ大きさで描く（駒の面いっぱい）
-        tm.characterSize = (pieceFontIsCustom ? 0.115f : type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
+        // 大きさは fontSize 64 のときの値で決めて、解像度を上げた分だけ縮める
+        tm.characterSize = (pieceFontIsGlyph ? 0.115f : type == PieceType.King ? 0.065f : 0.055f) * PieceScale * 64f / PieceFontSize;
         tm.anchor = TextAnchor.MiddleCenter;
         tm.alignment = TextAlignment.Center;
         tm.text = PieceText(p);
@@ -868,7 +882,7 @@ public class ShogiGame : MonoBehaviour
                 var t = tg.AddComponent<Text>();
                 t.font = pieceFont;
                 t.fontStyle = PieceFontStyle;
-                t.fontSize = pieceFontIsCustom ? 38 : 26;
+                t.fontSize = pieceFontIsGlyph ? 38 : 26;
                 t.alignment = TextAnchor.MiddleCenter;
                 t.raycastTarget = false;
                 layerCellTexts[k] = t;
