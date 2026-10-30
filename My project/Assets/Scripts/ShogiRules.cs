@@ -137,7 +137,8 @@ namespace Shogi3D
             Moves[(int)PieceType.Silver] = M(silver, none);
             Moves[(int)PieceType.Knight] = M(knight, none);
             Moves[(int)PieceType.Lance] = M(none, lance);
-            Moves[(int)PieceType.Pawn] = M(new[] { new Dir(0, 0, 1) }, none);
+            // 歩: 前へ 1 マス。同じ層・1 つ上の層・1 つ下の層のどれかを選べる
+            Moves[(int)PieceType.Pawn] = M(new[] { new Dir(0, 0, 1), new Dir(0, 1, 1), new Dir(0, -1, 1) }, none);
             // 成り駒。走る方向と重なる 1 マスの動きは除く（同じ手が二重にならないように）
             Moves[(int)PieceType.Rook | Piece.PromotedBit] = M(diag20, axis6);
             Moves[(int)PieceType.Bishop | Piece.PromotedBit] = M(axis6, diag20);
