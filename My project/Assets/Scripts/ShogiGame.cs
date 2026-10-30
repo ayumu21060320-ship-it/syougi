@@ -56,6 +56,15 @@ public class ShogiGame : MonoBehaviour
     bool animating;  // 駒が動いている間はクリックと CPU の着手を待たせる
 
     static readonly string[] ModeNames = { "CPU と対局（あなたが先手）", "CPU と対局（あなたが後手）", "2人で対局" };
+
+    // ---- オンライン対戦（ShogiOnline.cs）----
+    ShogiOnline online;      // 部屋を作った・入ったときだけ
+    int onlineSide = -1;     // オンラインでの自分の手番（0 = 先手、1 = 後手、-1 = まだ始まっていない）
+    string onlineStatus = "";
+    bool onlineBusy;         // 部屋を作っている・入っている途中
+    readonly Queue<Move> remoteMoves = new Queue<Move>(); // 相手の手（駒が動いている間は待たせる）
+    InputField codeInput;
+    Text onlineText;
     static readonly string[] LevelNames = { "", "弱い", "普通", "強い" };
 
     // ---- 表示 ----
@@ -278,6 +287,7 @@ public class ShogiGame : MonoBehaviour
     void OnDestroy()
     {
         Font.textureRebuilt -= OnFontTextureRebuilt;
+        online?.Dispose();
     }
 
     // ================= 盤の組み立て =================
@@ -455,6 +465,7 @@ public class ShogiGame : MonoBehaviour
 
     int CpuSide()
     {
+        if (online != null) return -1;
         return mode == 0 ? 1 : mode == 1 ? 0 : -1;
     }
 
@@ -477,7 +488,8 @@ public class ShogiGame : MonoBehaviour
         promoteDialog.SetActive(false);
         legal = state.GenerateLegalMoves();
         focusLayer = 4; // 玉のいる 5層
-        yaw = mode == 1 ? 180f - 35f : -35f;
+        bool viewFromGote = online != null ? onlineSide == 1 : mode == 1;
+        yaw = viewFromGote ? 180f - 35f : -35f;
         Refresh();
         MaybeStartCpu();
     }
@@ -490,6 +502,7 @@ public class ShogiGame : MonoBehaviour
 
     bool HumanCanMove()
     {
+        if (online != null && (!online.Connected || state.Turn != onlineSide)) return false; // オンラインでは自分の番だけ
         return result == null && cpuSearch == null && pendingPromotion == null && !animating && state.Turn != CpuSide();
     }
 
@@ -508,7 +521,7 @@ public class ShogiGame : MonoBehaviour
     {
         if (!HumanCanMove()) return;
         var to = MovesForSelection().FindAll(m => m.To == i);
-        if (to.Count == 1) { Play(to[0]); return; }
+        if (to.Count == 1) { PlayByHuman(to[0]); return; }
         if (to.Count == 2) { AskPromotion(to); return; }
         int p = state.Board[i];
         if (p != 0 && Piece.Owner(p) == state.Turn && selectedFrom != i)
@@ -540,7 +553,7 @@ public class ShogiGame : MonoBehaviour
         pendingPromotion = null;
         promoteDialog.SetActive(false);
         if (moves == null) return;
-        Play(moves.Find(m => m.Promote == promote));
+        PlayByHuman(moves.Find(m => m.Promote == promote));
     }
 
     void Play(Move m)
@@ -697,8 +710,21 @@ public class ShogiGame : MonoBehaviour
         state.UnmakeMove(h.undo);
     }
 
+    // 自分で指した手。オンラインなら相手にも送る
+    void PlayByHuman(Move m)
+    {
+        if (online != null) online.SendMove(m.From, m.To, (int)m.Drop, m.Promote, history.Count);
+        Play(m);
+    }
+
     void OnUndo()
     {
+        if (online != null)
+        {
+            onlineStatus = "オンライン対局では「待った」はできません";
+            Refresh();
+            return;
+        }
         if (cpuSearch != null || animating || history.Count == 0) return;
         gameId++;
         UndoOne();
@@ -713,15 +739,152 @@ public class ShogiGame : MonoBehaviour
     void OnResign()
     {
         if (result != null || cpuSearch != null) return;
+        if (online != null)
+        {
+            if (onlineSide < 0 || !online.Connected) return;
+            online.SendResign();
+            result = SideName(onlineSide) + "（あなた）の投了。" + SideName(onlineSide ^ 1) + "の勝ち";
+            ClearSelection();
+            Refresh();
+            return;
+        }
         result = SideName(state.Turn) + "の投了。" + SideName(state.Turn ^ 1) + "の勝ち";
         ClearSelection();
         Refresh();
+    }
+
+    // ================= オンライン対戦 =================
+
+    void OnNewGameButton()
+    {
+        if (online == null) { NewGame(); return; }
+        // オンラインでは部屋を作った人が始める（先手・後手は毎回ランダム）
+        if (online.IsHost && online.Connected) StartOnlineAsHost();
+        else onlineStatus = online.IsHost ? "相手がまだ入っていません" : "新しい対局は部屋を作った人が始めます";
+        Refresh();
+    }
+
+    async void CreateRoom()
+    {
+        if (onlineBusy) return;
+        onlineBusy = true;
+        LeaveOnline();
+        onlineStatus = "部屋を作っています…";
+        Refresh();
+        try
+        {
+            Attach(await ShogiOnline.HostAsync());
+            onlineStatus = "参加コード: " + online.JoinCode + "\n友達にこのコードを伝えて、待ってください";
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogException(e);
+            onlineStatus = "部屋を作れませんでした: " + e.Message;
+        }
+        onlineBusy = false;
+        NewGame();
+    }
+
+    async void JoinRoom()
+    {
+        if (onlineBusy) return;
+        string code = codeInput.text.Trim();
+        if (code.Length == 0)
+        {
+            onlineStatus = "友達から聞いた参加コードを入れてください";
+            Refresh();
+            return;
+        }
+        onlineBusy = true;
+        LeaveOnline();
+        onlineStatus = "部屋に入っています…";
+        Refresh();
+        try
+        {
+            Attach(await ShogiOnline.JoinAsync(code));
+            onlineStatus = "相手とつないでいます…";
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogException(e);
+            onlineStatus = "部屋に入れませんでした（コードを確かめてください）: " + e.Message;
+        }
+        onlineBusy = false;
+        NewGame();
+    }
+
+    void Attach(ShogiOnline o)
+    {
+        online = o;
+        onlineSide = -1;
+        o.PeerConnected += () =>
+        {
+            onlineStatus = "相手とつながりました";
+            if (o.IsHost) StartOnlineAsHost();
+            else Refresh();
+        };
+        o.StartReceived += hostIsSente => StartOnlineGame(hostIsSente ? 1 : 0);
+        o.MoveReceived += OnRemoteMove;
+        o.ResignReceived += () =>
+        {
+            result = SideName(onlineSide ^ 1) + "（相手）の投了。" + SideName(onlineSide) + "（あなた）の勝ち";
+            Refresh();
+        };
+        o.Disconnected += () =>
+        {
+            onlineStatus = "相手との接続が切れました";
+            Refresh();
+        };
+    }
+
+    void StartOnlineAsHost()
+    {
+        bool hostIsSente = Random.value < 0.5f; // 先手はランダム
+        online.SendStart(hostIsSente);
+        StartOnlineGame(hostIsSente ? 0 : 1);
+    }
+
+    void StartOnlineGame(int mySide)
+    {
+        onlineSide = mySide;
+        remoteMoves.Clear();
+        onlineStatus = "対局開始！ あなたは" + SideName(mySide) + "です";
+        NewGame();
+    }
+
+    void OnRemoteMove(int from, int to, int drop, bool promote, int ply)
+    {
+        // 相手の手が、こちらの盤面で指せる手かを確かめてから指す
+        int expectedPly = history.Count + remoteMoves.Count;
+        var m = legal.Find(x => x.From == from && x.To == to && (int)x.Drop == drop && x.Promote == promote);
+        bool ok = remoteMoves.Count == 0 && ply == expectedPly && state.Turn != onlineSide
+                  && (m.From == from && m.To == to && (int)m.Drop == drop && m.Promote == promote);
+        if (!ok)
+        {
+            onlineStatus = "相手の手を受け取れませんでした（盤面がずれています）。部屋を作り直してください";
+            Refresh();
+            return;
+        }
+        remoteMoves.Enqueue(m);
+    }
+
+    void LeaveOnline()
+    {
+        if (online == null) return;
+        online.Dispose();
+        online = null;
+        onlineSide = -1;
+        remoteMoves.Clear();
+        onlineStatus = "";
     }
 
     // ================= 毎フレーム =================
 
     void Update()
     {
+        online?.Update();
+        if (remoteMoves.Count > 0 && !animating) Play(remoteMoves.Dequeue());
+
         if (cpuSearch != null && !animating && cpuSearch.Step(CpuBudgetMs))
         {
             var search = cpuSearch;
@@ -1051,6 +1214,9 @@ public class ShogiGame : MonoBehaviour
         else
         {
             string s = SideName(state.Turn) + "の番です";
+            if (online != null)
+                s = onlineSide < 0 ? "オンライン: 対局の開始を待っています"
+                  : state.Turn == onlineSide ? "あなたの番です（" + SideName(onlineSide) + "）" : "相手の番です（" + SideName(state.Turn) + "）";
             if (cpuSearch != null) s = SideName(state.Turn) + "（CPU）が考えています…";
             if (checkSq >= 0) s = "王手！ " + s;
             if (selectedFrom >= 0)
@@ -1060,7 +1226,8 @@ public class ShogiGame : MonoBehaviour
             statusText.text = s;
         }
 
-        modeText.text = "モード: " + ModeNames[mode];
+        modeText.text = "モード: " + (online != null ? "オンライン対局" : ModeNames[mode]);
+        onlineText.text = onlineStatus;
         levelText.text = "CPU の強さ: " + LevelNames[level];
         layerText.text = "見ている層: " + (focusLayer + 1) + "層";
         focusText.text = focusOnly ? "表示: この層だけ" : "表示: 全部の層";
@@ -1116,10 +1283,21 @@ public class ShogiGame : MonoBehaviour
         MakeText(left, "立体将棋", 34, TextAnchor.MiddleLeft, 44);
         statusText = MakeText(left, "", 22, TextAnchor.UpperLeft, 64);
         var row1 = MakeRow(left);
-        MakeButton(row1, "新しい対局", 130, NewGame, Wood);
+        MakeButton(row1, "新しい対局", 130, OnNewGameButton, Wood);
         MakeButton(row1, "待った", 100, OnUndo, Wood);
         MakeButton(row1, "投了", 90, OnResign, Wood);
-        modeText = MakeButton(MakeRow(left), "", 388, () => { mode = (mode + 1) % 3; NewGame(); }, Wood);
+        modeText = MakeButton(MakeRow(left), "", 388, () =>
+        {
+            if (online != null) LeaveOnline(); // オンラインをやめて、CPU・2人の対局に戻る
+            else mode = (mode + 1) % 3;
+            NewGame();
+        }, Wood);
+        // オンライン対局: 部屋を作る／参加コードで入る
+        var onlineRow = MakeRow(left);
+        MakeButton(onlineRow, "部屋を作る", 120, CreateRoom, Wood);
+        codeInput = MakeInput(onlineRow, "参加コード", 150);
+        MakeButton(onlineRow, "参加", 70, JoinRoom, Wood);
+        onlineText = MakeText(left, "", 18, TextAnchor.UpperLeft, 24);
         levelText = MakeButton(MakeRow(left), "", 388, () => { level = level % 3 + 1; Refresh(); }, Wood);
         var row4 = MakeRow(left);
         MakeButton(row4, "▼", 50, () => ChangeLayer(-1), Wood);
@@ -1343,6 +1521,45 @@ public class ShogiGame : MonoBehaviour
         le.minHeight = minHeight;
         le.preferredWidth = width;
         return t;
+    }
+
+    InputField MakeInput(Transform parent, string placeholder, float width)
+    {
+        var go = new GameObject("Input");
+        go.transform.SetParent(parent, false);
+        go.AddComponent<RectTransform>();
+        var img = go.AddComponent<Image>();
+        img.color = Color.white;
+        var le = go.AddComponent<LayoutElement>();
+        le.preferredWidth = width;
+        le.minHeight = 40;
+        var input = go.AddComponent<InputField>();
+
+        Text Child(string name, Color c)
+        {
+            var cg = new GameObject(name);
+            cg.transform.SetParent(go.transform, false);
+            var rt = cg.AddComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = new Vector2(8, 2);
+            rt.offsetMax = new Vector2(-8, -2);
+            var t = cg.AddComponent<Text>();
+            t.font = font;
+            t.fontSize = 20;
+            t.color = c;
+            t.alignment = TextAnchor.MiddleLeft;
+            t.supportRichText = false;
+            return t;
+        }
+        var text = Child("Text", new Color(0.17f, 0.13f, 0.09f));
+        var ph = Child("Placeholder", new Color(0.6f, 0.6f, 0.6f));
+        ph.text = placeholder;
+        input.textComponent = text;
+        input.placeholder = ph;
+        input.targetGraphic = img;
+        input.characterLimit = 12;
+        return input;
     }
 
     // ボタンを作り、ボタンの文字（Text）を返す
