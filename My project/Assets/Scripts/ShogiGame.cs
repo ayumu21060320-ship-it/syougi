@@ -21,7 +21,8 @@ public class ShogiGame : MonoBehaviour
     static readonly Color SelectedColor = new Color(0.55f, 0.78f, 1f);
     static readonly Color LastColor = new Color(1f, 0.72f, 0.35f);
     static readonly Color CheckColor = new Color(1f, 0.35f, 0.35f);
-    static readonly Color TargetColor = new Color(0.25f, 0.85f, 0.35f);
+    static readonly Color TargetColor = new Color(0.35f, 0.55f, 1f, 0.28f);   // 動ける・打てるマス（半透明の青）
+    static readonly Color CaptureColor = new Color(1f, 0.35f, 0.3f, 0.35f);   // 相手の駒を取れるマス（半透明の赤）
     static readonly Color LineColor = new Color(0.35f, 0.25f, 0.12f);
     static readonly Color FrameColor = new Color(0.62f, 0.62f, 0.68f);
     static readonly Color Background = new Color(0.95f, 0.95f, 0.97f);
@@ -57,6 +58,7 @@ public class ShogiGame : MonoBehaviour
     Camera cam;
     Font font;
     Material baseMat;
+    Material glassMat; // 半透明
     MaterialPropertyBlock mpb;
     Transform pieceRoot, gridRoot;
     TextMesh layerLabel;
@@ -97,6 +99,7 @@ public class ShogiGame : MonoBehaviour
         var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
         baseMat = tmp.GetComponent<MeshRenderer>().sharedMaterial; // プロジェクト既定の（URP の）マテリアル
         Destroy(tmp);
+        glassMat = MakeGlass(baseMat);
         mpb = new MaterialPropertyBlock();
 
         BuildBoardFrame();
@@ -124,9 +127,26 @@ public class ShogiGame : MonoBehaviour
         return go;
     }
 
-    void SetColor(Renderer r, Color c)
+    // URP の Lit マテリアルを半透明にした複製を作る
+    static Material MakeGlass(Material src)
     {
-        r.sharedMaterial = baseMat;
+        var m = new Material(src);
+        m.SetFloat("_Surface", 1f); // Transparent
+        m.SetFloat("_Blend", 0f);   // Alpha
+        m.SetOverrideTag("RenderType", "Transparent");
+        m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        m.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+        m.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        m.SetFloat("_ZWrite", 0f);
+        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        return m;
+    }
+
+    void SetColor(Renderer r, Color c, Material mat = null)
+    {
+        r.sharedMaterial = mat != null ? mat : baseMat;
         r.GetPropertyBlock(mpb);
         mpb.SetColor("_BaseColor", c);
         mpb.SetColor("_Color", c);
@@ -194,11 +214,12 @@ public class ShogiGame : MonoBehaviour
         markers = new GameObject[ShogiState.Cells];
         for (int i = 0; i < ShogiState.Cells; i++)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            // マスいっぱいの半透明の立方体（少し小さくして、となりのマスと区別できるようにする）
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.transform.SetParent(root, false);
             go.transform.localPosition = CellPos(i);
-            go.transform.localScale = Vector3.one * 0.28f;
-            SetColor(go.GetComponent<Renderer>(), TargetColor);
+            go.transform.localScale = new Vector3(Cell, LayerGap, Cell) * 0.94f;
+            SetColor(go.GetComponent<Renderer>(), TargetColor, glassMat);
             colliderToCell[go.GetComponent<Collider>()] = i;
             go.SetActive(false);
             markers[i] = go;
@@ -487,7 +508,10 @@ public class ShogiGame : MonoBehaviour
         foreach (var m in MovesForSelection())
         {
             if (m.IsDrop && focusOnly && ShogiState.Z(m.To) != focusLayer) continue;
-            if (state.Board[m.To] == 0) markers[m.To].SetActive(true);
+            var marker = markers[m.To];
+            if (marker.activeSelf) continue; // 成る・成らないの 2 手がある
+            SetColor(marker.GetComponent<Renderer>(), state.Board[m.To] == 0 ? TargetColor : CaptureColor, glassMat);
+            marker.SetActive(true);
         }
 
         RefreshUI(checkSq);
@@ -522,7 +546,6 @@ public class ShogiGame : MonoBehaviour
             var r = go.AddComponent<MeshRenderer>();
             Color c = dim ? WoodDim : Wood;
             if (i == lastTo) c = LastColor;
-            if (targets.Contains(i)) c = TargetColor;   // 取れる駒
             if (i == selectedFrom) c = SelectedColor;
             if (i == checkSq) c = CheckColor;
             SetColor(r, c);
