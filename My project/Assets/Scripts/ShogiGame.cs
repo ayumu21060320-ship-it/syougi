@@ -58,7 +58,9 @@ public class ShogiGame : MonoBehaviour
 
     // ---- 表示 ----
     Camera cam;
-    Font font;
+    Font font;       // UI と番号の文字（ゴシック）
+    Font pieceFont;  // 駒の文字。Assets/Resources/Fonts/KomaFont（.ttf / .otf）があればそれ、無ければ太字の明朝
+    bool pieceFontIsCustom;
     Material baseMat;
     Material glassMat; // 半透明
     Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
@@ -102,11 +104,19 @@ public class ShogiGame : MonoBehaviour
         }
 
         font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
-        font.RequestCharactersInTexture("玉王飛角金銀桂香歩龍馬全圭杏と0123456789層", 64);
+        font.RequestCharactersInTexture("0123456789層", 64);
+
+        // 駒の文字のフォント。駒用の書体（錦旗・水無瀬など）のフォントファイルを
+        // Assets/Resources/Fonts/KomaFont.ttf（または .otf）として置くと、それを使う
+        pieceFont = Resources.Load<Font>("Fonts/KomaFont");
+        pieceFontIsCustom = pieceFont != null;
+        if (!pieceFontIsCustom)
+            pieceFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Mincho", "YuMincho", "MS Mincho", "Yu Gothic" }, 64);
+        pieceFont.RequestCharactersInTexture(PieceChars, 64, PieceFontStyle);
         // 駒の文字は専用シェーダー（Assets/Resources/ShogiPieceText.shader）で描き、手前の駒から透けないようにする
         var textShader = Shader.Find("Shogi3D/PieceText");
-        pieceTextMat = textShader != null ? new Material(textShader) : font.material;
-        pieceTextMat.mainTexture = font.material.mainTexture;
+        pieceTextMat = textShader != null ? new Material(textShader) : pieceFont.material;
+        pieceTextMat.mainTexture = pieceFont.material.mainTexture;
         Font.textureRebuilt += OnFontTextureRebuilt;
 
         var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -125,9 +135,14 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    const string PieceChars = "玉王飛角金銀桂香歩龍馬全圭杏と";
+
+    // 駒用の書体はそれだけで太さがあるので、太字にするのは代わりの明朝のときだけ
+    FontStyle PieceFontStyle => pieceFontIsCustom ? FontStyle.Normal : FontStyle.Bold;
+
     void OnFontTextureRebuilt(Font f)
     {
-        if (f == font && pieceTextMat != null) pieceTextMat.mainTexture = font.material.mainTexture;
+        if (f == pieceFont && pieceTextMat != null) pieceTextMat.mainTexture = pieceFont.material.mainTexture;
     }
 
     void OnDestroy()
@@ -637,7 +652,8 @@ public class ShogiGame : MonoBehaviour
         label.transform.SetParent(go.transform, false);
         label.transform.localPosition = new Vector3(0f, -0.04f * PieceScale, -PieceHalf - 0.005f);
         var tm = label.AddComponent<TextMesh>();
-        tm.font = font;
+        tm.font = pieceFont;
+        tm.fontStyle = PieceFontStyle;
         tm.fontSize = 64;
         tm.characterSize = (type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
         tm.anchor = TextAnchor.MiddleCenter;
@@ -826,7 +842,8 @@ public class ShogiGame : MonoBehaviour
                 rt.anchorMax = Vector2.one;
                 rt.offsetMin = rt.offsetMax = Vector2.zero;
                 var t = tg.AddComponent<Text>();
-                t.font = font;
+                t.font = pieceFont;
+                t.fontStyle = PieceFontStyle;
                 t.fontSize = 26;
                 t.alignment = TextAnchor.MiddleCenter;
                 t.raycastTarget = false;
