@@ -2,8 +2,11 @@
 // マス番号 idx = x + 9 * y + 81 * z
 //   x: 0..8（筋 = 9 - x。x = 0 が 9筋）
 //   y: 0..8（段 = y + 1。y = 0 が 一段）
-//   z: 0..8（層 = z + 1。z = 0 が 1層 = 先手側）
-// 先手（0）の「前」は +z、後手（1）の「前」は -z
+//   z: 0..8（層 = z + 1。z = 0 が 1層 = 一番下）
+// どの層も普通の将棋の盤と同じ向き。先手（0）は七〜九段側、後手（1）は一〜三段側
+// 先手の「前」は -y（一段の方向）、後手の「前」は +y。上下（層）は両者共通
+//
+// 駒の動きの表（Dir）は「前 = Dz」「横 = Dx」「上下 = Dy」で書き、ForEachTarget で盤の向きに直す
 
 using System;
 using System.Collections.Generic;
@@ -80,7 +83,7 @@ namespace Shogi3D
             return x >= 0 && x < N && y >= 0 && y < N && z >= 0 && z < N;
         }
 
-        // ---- 駒の動き（先手から見た向き。後手は dz を反転） ----
+        // ---- 駒の動き（Dz = 前、Dx = 横、Dy = 上下。後手は前後を反転） ----
         struct Dir { public int Dx, Dy, Dz; public Dir(int x, int y, int z) { Dx = x; Dy = y; Dz = z; } }
 
         class Movement
@@ -112,7 +115,7 @@ namespace Shogi3D
             foreach (var d in all26)
             {
                 if (d.Dz == 1 || d.Dz == 0 || (d.Dx == 0 && d.Dy == 0)) gold.Add(d);
-                if (d.Dz == 1 || (d.Dz == -1 && d.Dx != 0 && d.Dy != 0)) silver.Add(d);
+                if (d.Dz == 1 || (d.Dz == -1 && d.Dx != 0)) silver.Add(d); // 層の中では普通の銀と同じ
             }
             var knight = new List<Dir>();
             for (int dy = -1; dy <= 1; dy++)
@@ -176,26 +179,24 @@ namespace Shogi3D
         public static ShogiState Initial()
         {
             var s = new ShogiState();
-            // 普通の将棋の最初の 3 段を、9 つの段それぞれに並べる（片側 180 枚）
-            var line = new[] { PieceType.Lance, PieceType.Knight, PieceType.Silver, PieceType.Gold, PieceType.Gold,
+            // どの層にも普通の将棋の初期配置を並べる（片側 180 枚）。玉は 5層だけで、ほかの層は金
+            var line = new[] { PieceType.Lance, PieceType.Knight, PieceType.Silver, PieceType.Gold, PieceType.King,
                                PieceType.Gold, PieceType.Silver, PieceType.Knight, PieceType.Lance };
-            for (int owner = 0; owner < 2; owner++)
+            for (int z = 0; z < 9; z++)
             {
-                int Layer(int rel) { return owner == 0 ? rel : 8 - rel; }
-                for (int y = 0; y < 9; y++)
+                for (int x = 0; x < 9; x++)
                 {
-                    for (int x = 0; x < 9; x++)
-                    {
-                        // 1層: 香桂銀金○金銀桂香（○は五段だけ玉、ほかは金）
-                        var t = (x == 4 && y == 4) ? PieceType.King : line[x];
-                        s.Board[Index(x, y, Layer(0))] = Piece.Make(t, owner, false);
-                        // 3層: 全部歩
-                        s.Board[Index(x, y, Layer(2))] = Piece.Make(PieceType.Pawn, owner, false);
-                    }
-                    // 2層: 8筋に角、2筋に飛（筋 = 9 - x）
-                    s.Board[Index(9 - 8, y, Layer(1))] = Piece.Make(PieceType.Bishop, owner, false);
-                    s.Board[Index(9 - 2, y, Layer(1))] = Piece.Make(PieceType.Rook, owner, false);
+                    var t = (line[x] == PieceType.King && z != 4) ? PieceType.Gold : line[x];
+                    s.Board[Index(x, 8, z)] = Piece.Make(t, 0, false);              // 九段
+                    s.Board[Index(x, 6, z)] = Piece.Make(PieceType.Pawn, 0, false); // 七段
+                    s.Board[Index(x, 0, z)] = Piece.Make(t, 1, false);              // 一段
+                    s.Board[Index(x, 2, z)] = Piece.Make(PieceType.Pawn, 1, false); // 三段
                 }
+                // 先手: 角 8八・飛 2八、後手: 飛 8二・角 2二（筋 = 9 - x）
+                s.Board[Index(9 - 8, 7, z)] = Piece.Make(PieceType.Bishop, 0, false);
+                s.Board[Index(9 - 2, 7, z)] = Piece.Make(PieceType.Rook, 0, false);
+                s.Board[Index(9 - 8, 1, z)] = Piece.Make(PieceType.Rook, 1, false);
+                s.Board[Index(9 - 2, 1, z)] = Piece.Make(PieceType.Bishop, 1, false);
             }
             s.RecomputeHash();
             return s;
@@ -221,13 +222,13 @@ namespace Shogi3D
         }
 
         // ---- 成り・行き所 ----
-        public static int RelLayer(int owner, int z) { return owner == 0 ? z : 8 - z; } // 自分から見た層（0 が自陣の奥）
+        public static int RelRank(int owner, int y) { return owner == 0 ? 8 - y : y; } // 自分から見た段（0 が自陣の一番手前）
 
-        public static bool InPromotionZone(int owner, int z) { return RelLayer(owner, z) >= 6; }
+        public static bool InPromotionZone(int owner, int y) { return RelRank(owner, y) >= 6; }
 
-        public static bool IsDeadSquare(PieceType t, int owner, int z)
+        public static bool IsDeadSquare(PieceType t, int owner, int y)
         {
-            int rel = RelLayer(owner, z);
+            int rel = RelRank(owner, y);
             if (t == PieceType.Pawn) return rel == 8;
             if (t == PieceType.Knight) return rel >= 7;
             return false;
@@ -243,18 +244,18 @@ namespace Shogi3D
             int x = X(from), y = Y(from), z = Z(from);
             foreach (var d in mv.Steps)
             {
-                int nx = x + d.Dx, ny = y + d.Dy, nz = z + d.Dz * f;
+                int nx = x + d.Dx, ny = y - d.Dz * f, nz = z + d.Dy;
                 if (Inside(nx, ny, nz)) cb(Index(nx, ny, nz));
             }
             foreach (var d in mv.Slides)
             {
-                int nx = x + d.Dx, ny = y + d.Dy, nz = z + d.Dz * f;
+                int nx = x + d.Dx, ny = y - d.Dz * f, nz = z + d.Dy;
                 while (Inside(nx, ny, nz))
                 {
                     int to = Index(nx, ny, nz);
                     cb(to);
                     if (Board[to] != 0) break;
-                    nx += d.Dx; ny += d.Dy; nz += d.Dz * f;
+                    nx += d.Dx; ny -= d.Dz * f; nz += d.Dy;
                 }
             }
         }
@@ -277,7 +278,7 @@ namespace Shogi3D
                 if (mv.Slides.Length == 0)
                 {
                     int dx = Math.Abs(X(i) - X(target)), dy = Math.Abs(Y(i) - Y(target)), dz = Math.Abs(Z(i) - Z(target));
-                    if (dx > 1 || dy > 1 || dz > 2) continue;
+                    if (dx > 1 || dy > 2 || dz > 1) continue; // 桂は前後に 2
                 }
                 bool hit = false;
                 ForEachTarget(i, to => { if (to == target) hit = true; });
@@ -303,20 +304,20 @@ namespace Shogi3D
                 if (p == 0 || Piece.Owner(p) != me) continue;
                 var t = Piece.Type(p);
                 bool promotable = !Piece.Promoted(p) && Piece.CanPromote(t);
-                int fromZ = Z(from);
+                int fromY = Y(from);
                 ForEachTarget(from, to =>
                 {
                     int dst = Board[to];
                     if (dst != 0 && Piece.Owner(dst) == me) return;
-                    int toZ = Z(to);
-                    bool canPromote = promotable && (InPromotionZone(me, fromZ) || InPromotionZone(me, toZ));
+                    int toY = Y(to);
+                    bool canPromote = promotable && (InPromotionZone(me, fromY) || InPromotionZone(me, toY));
                     if (canPromote) moves.Add(new Move(from, to, true));
-                    if (!canPromote || !IsDeadSquare(t, me, toZ)) moves.Add(new Move(from, to, false));
+                    if (!canPromote || !IsDeadSquare(t, me, toY)) moves.Add(new Move(from, to, false));
                 });
             }
             if (!includeDrops) return moves;
 
-            bool[] pawnColumn = null; // [x + 9y] 自分の歩がある縦の列
+            bool[] pawnColumn = null; // [x + 9z] 自分の歩がある筋（層ごと）
             foreach (var t in HandTypes)
             {
                 if (Hands[me, (int)t] == 0) continue;
@@ -324,13 +325,13 @@ namespace Shogi3D
                 {
                     pawnColumn = new bool[81];
                     int myPawn = Piece.Make(PieceType.Pawn, me, false);
-                    for (int i = 0; i < Cells; i++) if (Board[i] == myPawn) pawnColumn[i % 81] = true;
+                    for (int i = 0; i < Cells; i++) if (Board[i] == myPawn) pawnColumn[X(i) + 9 * Z(i)] = true;
                 }
                 for (int to = 0; to < Cells; to++)
                 {
                     if (Board[to] != 0) continue;
-                    if (IsDeadSquare(t, me, Z(to))) continue;
-                    if (t == PieceType.Pawn && pawnColumn[to % 81]) continue; // 二歩
+                    if (IsDeadSquare(t, me, Y(to))) continue;
+                    if (t == PieceType.Pawn && pawnColumn[X(to) + 9 * Z(to)]) continue; // 二歩（同じ層の同じ筋）
                     moves.Add(Move.MakeDrop(t, to));
                 }
             }

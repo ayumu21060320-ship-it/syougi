@@ -273,7 +273,7 @@ public class ShogiGame : MonoBehaviour
         pendingPromotion = null;
         promoteDialog.SetActive(false);
         legal = state.GenerateLegalMoves();
-        focusLayer = mode == 1 ? 8 : 0;
+        focusLayer = 4; // 玉のいる 5層
         yaw = mode == 1 ? 180f - 35f : -35f;
         Refresh();
         MaybeStartCpu();
