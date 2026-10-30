@@ -2,6 +2,7 @@
 //   左クリック: 駒を選ぶ・指す / 右ドラッグ: 盤を回す / ホイール: 拡大縮小 / ↑↓キー: 見る層を変える
 // 駒は各層に寝かせて置く（表が上。先手の駒は奥向き、後手の駒は手前向き）
 
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -50,6 +51,7 @@ public class ShogiGame : MonoBehaviour
     int focusLayer;  // 0..8
     bool focusOnly;  // 見ている層だけ強調する
     List<Move> pendingPromotion;
+    bool animating;  // 駒が動いている間はクリックと CPU の着手を待たせる
 
     static readonly string[] ModeNames = { "CPU と対局（あなたが先手）", "CPU と対局（あなたが後手）", "2人で対局" };
     static readonly string[] LevelNames = { "", "弱い", "普通", "強い" };
@@ -66,6 +68,7 @@ public class ShogiGame : MonoBehaviour
     readonly List<Transform> billboards = new List<Transform>(); // いつもカメラを向く文字
     readonly Dictionary<Collider, int> colliderToCell = new Dictionary<Collider, int>();
     readonly List<Transform> pieceObjects = new List<Transform>();
+    readonly Dictionary<int, Transform> pieceAt = new Dictionary<int, Transform>(); // マス → 駒のオブジェクト
     readonly Dictionary<int, Mesh> pieceMeshes = new Dictionary<int, Mesh>();
     GameObject[] markers;
     float yaw = -35f, pitch = 38f, distance = 20f;
@@ -325,7 +328,7 @@ public class ShogiGame : MonoBehaviour
 
     bool HumanCanMove()
     {
-        return result == null && cpuTask == null && pendingPromotion == null && state.Turn != CpuSide();
+        return result == null && cpuTask == null && pendingPromotion == null && !animating && state.Turn != CpuSide();
     }
 
     List<Move> MovesForSelection()
@@ -382,12 +385,50 @@ public class ShogiGame : MonoBehaviour
     {
         int prevTo = history.Count > 0 ? history[history.Count - 1].undo.Move.To : -1;
         string text = state.MoveText(m, prevTo);
+        int captured = m.IsDrop ? 0 : state.Board[m.To];
         var u = state.MakeMove(m);
         history.Add((u, text));
         positionCount.TryGetValue(state.Hash, out int c);
         positionCount[state.Hash] = c + 1;
         ClearSelection();
         AfterMove();
+        StartCoroutine(AnimateMove(m, captured));
+    }
+
+    // ================= アニメーション =================
+
+    const float MoveSeconds = 0.4f;
+
+    // 駒は盤の更新後の位置に作り直されているので、元の位置から行き先まで動かして見せる
+    IEnumerator AnimateMove(Move m, int captured)
+    {
+        if (!pieceAt.TryGetValue(m.To, out var piece)) yield break;
+        animating = true;
+        Vector3 to = CellPos(m.To);
+        Vector3 from = m.IsDrop ? to + Vector3.up * 2.5f : CellPos(m.From); // 打つ駒は上から降りてくる
+        float lift = m.IsDrop ? 0f : 0.7f;                                  // 盤上の駒は山なりに飛ぶ
+        Quaternion baseRot = piece.rotation;
+        Transform ghost = captured != 0 ? CreatePiece(captured, to, Wood, false, -1) : null; // 取られた駒は縮んで消える
+
+        for (float t = 0f; t < MoveSeconds; t += Time.deltaTime)
+        {
+            float k = t / MoveSeconds;
+            float e = k * k * (3f - 2f * k); // ゆっくり出てゆっくり止まる
+            if (piece != null)
+            {
+                piece.position = Vector3.Lerp(from, to, e) + Vector3.up * (Mathf.Sin(k * Mathf.PI) * lift);
+                if (m.Promote) piece.rotation = baseRot * Quaternion.AngleAxis(360f * e, Vector3.up); // 成るときは一回転
+            }
+            if (ghost != null) ghost.localScale = Vector3.one * (1f - e);
+            yield return null;
+        }
+        if (piece != null)
+        {
+            piece.position = to;
+            piece.rotation = baseRot;
+        }
+        if (ghost != null) Destroy(ghost.gameObject);
+        animating = false;
     }
 
     void AfterMove()
@@ -423,7 +464,7 @@ public class ShogiGame : MonoBehaviour
 
     void OnUndo()
     {
-        if (cpuTask != null || history.Count == 0) return;
+        if (cpuTask != null || animating || history.Count == 0) return;
         gameId++;
         UndoOne();
         if (state.Turn == CpuSide() && history.Count > 0) UndoOne(); // CPU 対局では自分の手番まで戻す
@@ -446,7 +487,7 @@ public class ShogiGame : MonoBehaviour
 
     void Update()
     {
-        if (cpuTask != null && cpuTask.IsCompleted)
+        if (cpuTask != null && cpuTask.IsCompleted && !animating)
         {
             var task = cpuTask;
             cpuTask = null;
@@ -542,6 +583,7 @@ public class ShogiGame : MonoBehaviour
             Destroy(t.gameObject);
         }
         pieceObjects.Clear();
+        pieceAt.Clear();
         var targets = new HashSet<int>();
         foreach (var m in MovesForSelection()) targets.Add(m.To);
 
@@ -549,41 +591,51 @@ public class ShogiGame : MonoBehaviour
         {
             int p = state.Board[i];
             if (p == 0) continue;
-            var type = Piece.Type(p);
-            int owner = Piece.Owner(p);
             bool dim = focusOnly && ShogiState.Z(i) != focusLayer && i != selectedFrom && !targets.Contains(i);
 
-            var go = new GameObject("Piece");
-            go.transform.SetParent(pieceRoot, false);
-            go.transform.position = CellPos(i);
-            // 寝かせて表を上に。先手は奥（+Z）向き、後手は手前向き
-            go.transform.rotation = Quaternion.Euler(90f, owner == 0 ? 0f : 180f, 0f);
-            go.transform.localScale = Vector3.one * (dim ? 0.45f : 1f);
-            go.AddComponent<MeshFilter>().sharedMesh = PieceMesh(type);
-            var r = go.AddComponent<MeshRenderer>();
             Color c = dim ? WoodDim : Wood;
             if (i == lastTo) c = LastColor;
             if (i == selectedFrom) c = SelectedColor;
             if (i == checkSq) c = CheckColor;
-            SetColor(r, c);
+            var t = CreatePiece(p, CellPos(i), c, dim, i);
+            pieceObjects.Add(t);
+            pieceAt[i] = t;
+        }
+    }
+
+    // 駒を 1 枚作る。cell >= 0 ならクリックできるようにする
+    Transform CreatePiece(int p, Vector3 pos, Color c, bool dim, int cell)
+    {
+        var type = Piece.Type(p);
+        int owner = Piece.Owner(p);
+        var go = new GameObject("Piece");
+        go.transform.SetParent(pieceRoot, false);
+        go.transform.position = pos;
+        // 寝かせて表を上に。先手は奥（+Z）向き、後手は手前向き
+        go.transform.rotation = Quaternion.Euler(90f, owner == 0 ? 0f : 180f, 0f);
+        go.transform.localScale = Vector3.one * (dim ? 0.45f : 1f);
+        go.AddComponent<MeshFilter>().sharedMesh = PieceMesh(type);
+        SetColor(go.AddComponent<MeshRenderer>(), c);
+        if (cell >= 0)
+        {
             var col = go.AddComponent<BoxCollider>();
             col.size = new Vector3(0.62f * PieceScale, 0.72f * PieceScale, PieceHalf * 2f + 0.02f);
-            colliderToCell[col] = i;
-
-            var label = new GameObject("Char");
-            label.transform.SetParent(go.transform, false);
-            label.transform.localPosition = new Vector3(0f, -0.04f * PieceScale, -PieceHalf - 0.005f);
-            var tm = label.AddComponent<TextMesh>();
-            tm.font = font;
-            tm.fontSize = 64;
-            tm.characterSize = (type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
-            tm.anchor = TextAnchor.MiddleCenter;
-            tm.alignment = TextAlignment.Center;
-            tm.text = ShogiState.PieceChar(p);
-            tm.color = Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
-            label.GetComponent<MeshRenderer>().sharedMaterial = pieceTextMat;
-            pieceObjects.Add(go.transform);
+            colliderToCell[col] = cell;
         }
+
+        var label = new GameObject("Char");
+        label.transform.SetParent(go.transform, false);
+        label.transform.localPosition = new Vector3(0f, -0.04f * PieceScale, -PieceHalf - 0.005f);
+        var tm = label.AddComponent<TextMesh>();
+        tm.font = font;
+        tm.fontSize = 64;
+        tm.characterSize = (type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
+        tm.anchor = TextAnchor.MiddleCenter;
+        tm.alignment = TextAlignment.Center;
+        tm.text = ShogiState.PieceChar(p);
+        tm.color = Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
+        label.GetComponent<MeshRenderer>().sharedMaterial = pieceTextMat;
+        return go.transform;
     }
 
     void RefreshUI(int checkSq)
