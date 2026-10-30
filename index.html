@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>将棋</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="app">
+    <section class="game">
+      <div class="hand hand-gote" id="hand-gote" aria-label="後手の持ち駒"></div>
+      <div class="board-wrap">
+        <div class="files" aria-hidden="true"></div>
+        <div class="board-row">
+          <div class="board" id="board" role="grid" aria-label="将棋盤"></div>
+          <div class="ranks" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="hand hand-sente" id="hand-sente" aria-label="先手の持ち駒"></div>
+    </section>
+
+    <aside class="panel">
+      <h1>将棋</h1>
+      <p class="status" id="status"></p>
+
+      <div class="controls">
+        <label>対局モード
+          <select id="mode">
+            <option value="cpu">CPU と対局（あなたが先手）</option>
+            <option value="cpu-gote">CPU と対局（あなたが後手）</option>
+            <option value="human">2人で対局</option>
+          </select>
+        </label>
+        <label>CPU の強さ
+          <select id="level">
+            <option value="1">弱い</option>
+            <option value="2" selected>普通</option>
+            <option value="3">強い</option>
+          </select>
+        </label>
+        <div class="buttons">
+          <button id="new-game" type="button">新しい対局</button>
+          <button id="undo" type="button">待った</button>
+          <button id="resign" type="button">投了</button>
+        </div>
+      </div>
+
+      <h2>棋譜</h2>
+      <ol class="log" id="log"></ol>
+    </aside>
+  </main>
+
+  <dialog id="promote-dialog">
+    <p>成りますか？</p>
+    <div class="buttons">
+      <button type="button" value="yes" id="promote-yes">成る</button>
+      <button type="button" value="no" id="promote-no">成らない</button>
+    </div>
+  </dialog>
+
+  <script src="js/shogi.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
