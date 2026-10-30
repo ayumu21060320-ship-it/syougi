@@ -127,7 +127,9 @@ public class ShogiGame : MonoBehaviour
         // 英字に駒の絵が入ったフォント（K'sShogiPieces など）なら駒の絵で描く
         pieceFont = LoadPieceFont();
         pieceFontIsCustom = pieceFont != null;
-        pieceFontIsGlyph = pieceFontIsCustom && !pieceFont.HasCharacter('歩') && pieceFont.HasCharacter('I');
+        // 「歩」の字が入っていなければ、英字に駒の絵が入ったフォントとみなす。
+        // Font.HasCharacter は Web（WebGL）版で正しく答えないことがあるので、実際に文字を作れるかで確かめる
+        pieceFontIsGlyph = pieceFontIsCustom && !CanDraw(pieceFont, '歩');
         if (!pieceFontIsCustom)
             pieceFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Mincho", "YuMincho", "MS Mincho", "Yu Gothic" }, PieceFontSize);
         Debug.Log("駒のフォント: " + pieceFont.name + (pieceFontIsGlyph ? "（駒の絵）" : "（漢字）"));
@@ -138,9 +140,15 @@ public class ShogiGame : MonoBehaviour
         pieceTextMat.mainTexture = pieceFont.material.mainTexture;
         Font.textureRebuilt += OnFontTextureRebuilt;
 
-        var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        baseMat = tmp.GetComponent<MeshRenderer>().sharedMaterial; // プロジェクト既定の（URP の）マテリアル
-        Destroy(tmp);
+        // 不透明な物は専用シェーダー（Assets/Resources/ShogiSolid.shader）で描く。見つからなければプロジェクト既定のマテリアル
+        var solidShader = Shader.Find("Shogi3D/Solid");
+        if (solidShader != null) baseMat = new Material(solidShader);
+        else
+        {
+            var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            baseMat = tmp.GetComponent<MeshRenderer>().sharedMaterial;
+            Destroy(tmp);
+        }
         // 半透明は専用シェーダー（Assets/Resources/ShogiGlass.shader）で描く。見つからなければ URP の Lit を半透明に切り替える
         var glassShader = Shader.Find("Shogi3D/Glass");
         glassMat = glassShader != null ? new Material(glassShader) : MakeGlass(baseMat);
@@ -156,6 +164,12 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    static bool CanDraw(Font f, char c)
+    {
+        f.RequestCharactersInTexture(c.ToString(), PieceFontSize);
+        return f.GetCharacterInfo(c, out _, PieceFontSize);
+    }
+
     static Font LoadPieceFont()
     {
         var fonts = Resources.LoadAll<Font>("Fonts");
