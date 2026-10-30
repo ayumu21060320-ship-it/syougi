@@ -58,7 +58,9 @@ public class ShogiGame : MonoBehaviour
 
     // ---- 表示 ----
     Camera cam;
-    Font font;
+    Font font;       // UI と番号の文字（ゴシック）
+    Font pieceFont;  // 駒の文字。Assets/Resources/Fonts/KomaFont（.ttf / .otf）があればそれ、無ければ太字の明朝
+    bool pieceFontIsCustom;
     Material baseMat;
     Material glassMat; // 半透明
     Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
@@ -102,11 +104,19 @@ public class ShogiGame : MonoBehaviour
         }
 
         font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic", "Segoe UI Symbol" }, 64);
-        font.RequestCharactersInTexture("玉王飛角金銀桂香歩龍馬全圭杏と0123456789層", 64);
+        font.RequestCharactersInTexture("0123456789層", 64);
+
+        // 駒の文字のフォント。駒用の書体（錦旗・水無瀬など）のフォントファイルを
+        // Assets/Resources/Fonts/KomaFont.ttf（または .otf）として置くと、それを使う
+        pieceFont = Resources.Load<Font>("Fonts/KomaFont");
+        pieceFontIsCustom = pieceFont != null;
+        if (!pieceFontIsCustom)
+            pieceFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Mincho", "YuMincho", "MS Mincho", "Yu Gothic" }, 64);
+        pieceFont.RequestCharactersInTexture(PieceChars, 64, PieceFontStyle);
         // 駒の文字は専用シェーダー（Assets/Resources/ShogiPieceText.shader）で描き、手前の駒から透けないようにする
         var textShader = Shader.Find("Shogi3D/PieceText");
-        pieceTextMat = textShader != null ? new Material(textShader) : font.material;
-        pieceTextMat.mainTexture = font.material.mainTexture;
+        pieceTextMat = textShader != null ? new Material(textShader) : pieceFont.material;
+        pieceTextMat.mainTexture = pieceFont.material.mainTexture;
         Font.textureRebuilt += OnFontTextureRebuilt;
 
         var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -125,9 +135,36 @@ public class ShogiGame : MonoBehaviour
     }
 
     // 新しい文字が必要になるとフォントの画像が作り直されるので、駒の文字のマテリアルにも渡す
+    const string PieceCharsKanji = "玉王飛角金銀桂香歩龍馬全圭杏と";
+    // 駒の絵のフォント（K'sShogiPieces）は、英大文字 1 文字に駒の絵（枠と文字）が 1 枚入っている
+    const string PieceCharsGlyph = "ABCDEFGHISTVWXY";
+    string PieceChars => pieceFontIsCustom ? PieceCharsGlyph : PieceCharsKanji;
+
+    // 駒に表示する文字。駒の絵のフォントでは、その駒の絵が入っている英字にする
+    string PieceText(int p)
+    {
+        if (!pieceFontIsCustom) return ShogiState.PieceChar(p);
+        bool pr = Piece.Promoted(p);
+        switch (Piece.Type(p))
+        {
+            case PieceType.King: return Piece.Owner(p) == 0 ? "B" : "A"; // 玉将・王将
+            case PieceType.Rook: return pr ? "S" : "C";
+            case PieceType.Bishop: return pr ? "T" : "D";
+            case PieceType.Gold: return "E";
+            case PieceType.Silver: return pr ? "V" : "F";
+            case PieceType.Knight: return pr ? "W" : "G";
+            case PieceType.Lance: return pr ? "X" : "H";
+            case PieceType.Pawn: return pr ? "Y" : "I";
+        }
+        return "";
+    }
+
+    // 駒用の書体はそれだけで太さがあるので、太字にするのは代わりの明朝のときだけ
+    FontStyle PieceFontStyle => pieceFontIsCustom ? FontStyle.Normal : FontStyle.Bold;
+
     void OnFontTextureRebuilt(Font f)
     {
-        if (f == font && pieceTextMat != null) pieceTextMat.mainTexture = font.material.mainTexture;
+        if (f == pieceFont && pieceTextMat != null) pieceTextMat.mainTexture = pieceFont.material.mainTexture;
     }
 
     void OnDestroy()
@@ -635,14 +672,17 @@ public class ShogiGame : MonoBehaviour
 
         var label = new GameObject("Char");
         label.transform.SetParent(go.transform, false);
-        label.transform.localPosition = new Vector3(0f, -0.04f * PieceScale, -PieceHalf - 0.005f);
+        // 駒の絵のフォントは絵の中心が文字の中心に来るのでずらさない。漢字は少し下げると駒の中央に見える
+        label.transform.localPosition = new Vector3(0f, pieceFontIsCustom ? 0f : -0.04f * PieceScale, -PieceHalf - 0.005f);
         var tm = label.AddComponent<TextMesh>();
-        tm.font = font;
+        tm.font = pieceFont;
+        tm.fontStyle = PieceFontStyle;
         tm.fontSize = 64;
-        tm.characterSize = (type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
+        // 駒の絵は駒の種類ごとに大きさが描き分けてあるので、全部同じ大きさで描く（駒の面いっぱい）
+        tm.characterSize = (pieceFontIsCustom ? 0.115f : type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
         tm.anchor = TextAnchor.MiddleCenter;
         tm.alignment = TextAlignment.Center;
-        tm.text = ShogiState.PieceChar(p);
+        tm.text = PieceText(p);
         tm.color = Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
         label.GetComponent<MeshRenderer>().sharedMaterial = pieceTextMat;
         return go.transform;
@@ -826,8 +866,9 @@ public class ShogiGame : MonoBehaviour
                 rt.anchorMax = Vector2.one;
                 rt.offsetMin = rt.offsetMax = Vector2.zero;
                 var t = tg.AddComponent<Text>();
-                t.font = font;
-                t.fontSize = 26;
+                t.font = pieceFont;
+                t.fontStyle = PieceFontStyle;
+                t.fontSize = pieceFontIsCustom ? 38 : 26;
                 t.alignment = TextAnchor.MiddleCenter;
                 t.raycastTarget = false;
                 layerCellTexts[k] = t;
@@ -856,7 +897,7 @@ public class ShogiGame : MonoBehaviour
                 layerCells[k].color = c;
 
                 var t = layerCellTexts[k];
-                t.text = p == 0 ? "" : ShogiState.PieceChar(p);
+                t.text = p == 0 ? "" : PieceText(p);
                 t.color = p != 0 && Piece.Promoted(p) ? new Color(0.75f, 0.1f, 0.05f) : Color.black;
                 // 後手の駒は逆さまに
                 t.rectTransform.localRotation = p != 0 && Piece.Owner(p) == 1 ? Quaternion.Euler(0f, 0f, 180f) : Quaternion.identity;
