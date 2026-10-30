@@ -99,7 +99,9 @@ public class ShogiGame : MonoBehaviour
         var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
         baseMat = tmp.GetComponent<MeshRenderer>().sharedMaterial; // プロジェクト既定の（URP の）マテリアル
         Destroy(tmp);
-        glassMat = MakeGlass(baseMat);
+        // 半透明は専用シェーダー（Assets/Resources/ShogiGlass.shader）で描く。見つからなければ URP の Lit を半透明に切り替える
+        var glassShader = Shader.Find("Shogi3D/Glass");
+        glassMat = glassShader != null ? new Material(glassShader) : MakeGlass(baseMat);
         mpb = new MaterialPropertyBlock();
 
         BuildBoardFrame();
