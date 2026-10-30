@@ -13,6 +13,7 @@ Unity プロジェクトは `My project/` フォルダ。Git に入れるのは�
 - `My project/Assets/Scripts/ShogiAI.cs` … CPU（Unity に依存しない。ブラウザでも動くよう、別スレッドは使わず毎フレーム少しずつ考える）
 - `My project/Assets/Scripts/ShogiGame.cs` … 画面と操作。シーンを再生すると自動で起動する（シーンに置く必要なし）
   PC（マウス・横画面）とスマホのブラウザ（タッチ・縦画面）の両方で動かす。WebGL で使えない機能（別スレッド、PC のフォント）を使わない
+- `My project/Assets/Scripts/ShogiOnline.cs` … オンライン対戦の通信（Unity Relay ＋ Unity Transport の WebSocket）。指した手だけを送り合う。パッケージ Multiplayer Services 2.4.1 が必要
 - ルールは `docs/決めたこと.md` の「立体将棋のルール」が正。コードを変えたらそちらも合わせる
 
 ## 毎回やること
