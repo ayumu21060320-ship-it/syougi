@@ -1,5 +1,6 @@
 // 立体将棋の画面と操作。シーンを再生すると自動で起動する（シーンに何も置かなくてよい）
 //   左クリック: 駒を選ぶ・指す / 右ドラッグ: 盤を回す / ホイール: 拡大縮小 / ↑↓キー: 見る層を変える
+// 駒は各層に寝かせて置く（表が上。先手の駒は奥向き、後手の駒は手前向き）
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -22,6 +23,10 @@ public class ShogiGame : MonoBehaviour
     static readonly Color CheckColor = new Color(1f, 0.35f, 0.35f);
     static readonly Color TargetColor = new Color(0.25f, 0.85f, 0.35f);
     static readonly Color LineColor = new Color(0.35f, 0.25f, 0.12f);
+    static readonly Color FrameColor = new Color(0.62f, 0.62f, 0.68f);
+    static readonly Color Background = new Color(0.95f, 0.95f, 0.97f);
+    const float PieceScale = 1.25f;   // マスに対する駒の大きさ
+    const float PieceHalf = 0.06f;    // 駒の厚みの半分
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Boot()
@@ -55,11 +60,12 @@ public class ShogiGame : MonoBehaviour
     MaterialPropertyBlock mpb;
     Transform pieceRoot, gridRoot;
     TextMesh layerLabel;
+    readonly List<Transform> billboards = new List<Transform>(); // いつもカメラを向く文字
     readonly Dictionary<Collider, int> colliderToCell = new Dictionary<Collider, int>();
     readonly List<Transform> pieceObjects = new List<Transform>();
     readonly Dictionary<int, Mesh> pieceMeshes = new Dictionary<int, Mesh>();
     GameObject[] markers;
-    float yaw = 0f, pitch = 28f, distance = 19f;
+    float yaw = -35f, pitch = 38f, distance = 20f;
 
     // ---- UI ----
     Text statusText, kifuText, modeText, levelText, layerText, focusText;
@@ -74,6 +80,8 @@ public class ShogiGame : MonoBehaviour
             cam = new GameObject("Main Camera").AddComponent<Camera>();
             cam.tag = "MainCamera";
         }
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = Background;
         if (FindAnyObjectByType<Light>() == null)
         {
             var light = new GameObject("Light").AddComponent<Light>();
@@ -132,30 +140,34 @@ public class ShogiGame : MonoBehaviour
         float h = 4.5f * Cell, v = 4.5f * LayerGap, t = 0.04f;
         foreach (var sy in new[] { -1, 1 })
             foreach (var sz in new[] { -1, 1 })
-                MakeBar(frame, new Vector3(0, sy * v, sz * h), new Vector3(2 * h, t, t), LineColor);
+                MakeBar(frame, new Vector3(0, sy * v, sz * h), new Vector3(2 * h, t, t), FrameColor);
         foreach (var sx in new[] { -1, 1 })
             foreach (var sz in new[] { -1, 1 })
-                MakeBar(frame, new Vector3(sx * h, 0, sz * h), new Vector3(t, 2 * v, t), LineColor);
+                MakeBar(frame, new Vector3(sx * h, 0, sz * h), new Vector3(t, 2 * v, t), FrameColor);
         foreach (var sx in new[] { -1, 1 })
             foreach (var sy in new[] { -1, 1 })
-                MakeBar(frame, new Vector3(sx * h, sy * v, 0), new Vector3(t, t, 2 * h), LineColor);
+                MakeBar(frame, new Vector3(sx * h, sy * v, 0), new Vector3(t, t, 2 * h), FrameColor);
 
-        // 見ている層のマス目（層を変えるときは高さだけ動かす）
+        // 見ている層のマス目（層を変えるときは高さだけ動かす）。駒の下面に合わせる
         gridRoot = new GameObject("LayerGrid").transform;
+        float gy = -PieceHalf - 0.01f;
         for (int k = 0; k <= 9; k++)
         {
             float p = (k - 4.5f) * Cell;
-            MakeBar(gridRoot, new Vector3(p, -0.35f, 0), new Vector3(0.02f, 0.02f, 9 * Cell), LineColor);
-            MakeBar(gridRoot, new Vector3(0, -0.35f, p), new Vector3(9 * Cell, 0.02f, 0.02f), LineColor);
+            MakeBar(gridRoot, new Vector3(p, gy, 0), new Vector3(0.015f, 0.015f, 9 * Cell), LineColor);
+            MakeBar(gridRoot, new Vector3(0, gy, p), new Vector3(9 * Cell, 0.015f, 0.015f), LineColor);
         }
-        // 筋（手前の辺）と段（右の辺）の番号
+        layerLabel = MakeLabel(gridRoot, "", new Vector3(-5.4f * Cell, gy, -4.5f * Cell), 0.07f);
+
+        // 立方体の辺に番号を並べる: 筋（手前の下の辺）、段（右の下の辺）、層（右奥の縦の辺）
         string[] kan = { "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+        float bottom = -4.5f * LayerGap;
         for (int k = 0; k < 9; k++)
         {
-            MakeLabel(gridRoot, (9 - k).ToString(), new Vector3((k - 4) * Cell, -0.35f, -5.0f * Cell), 0.05f);
-            MakeLabel(gridRoot, kan[k], new Vector3(5.0f * Cell, -0.35f, (4 - k) * Cell), 0.05f);
+            MakeLabel(frame, (9 - k).ToString(), new Vector3((k - 4) * Cell, bottom, -5.0f * Cell), 0.06f);
+            MakeLabel(frame, kan[k], new Vector3(5.0f * Cell, bottom, (4 - k) * Cell), 0.06f);
+            MakeLabel(frame, (k + 1) + "層", new Vector3(5.3f * Cell, (k - 4) * LayerGap, 4.5f * Cell), 0.05f);
         }
-        layerLabel = MakeLabel(gridRoot, "", new Vector3(-5.6f * Cell, -0.35f, -5.0f * Cell), 0.07f);
     }
 
     TextMesh MakeLabel(Transform parent, string text, Vector3 pos, float size)
@@ -163,14 +175,14 @@ public class ShogiGame : MonoBehaviour
         var go = new GameObject("Label");
         go.transform.SetParent(parent, false);
         go.transform.localPosition = pos;
-        go.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // 上向きに寝かせる
+        billboards.Add(go.transform);
         var tm = go.AddComponent<TextMesh>();
         tm.font = font;
         tm.fontSize = 64;
         tm.characterSize = size;
         tm.anchor = TextAnchor.MiddleCenter;
         tm.alignment = TextAlignment.Center;
-        tm.color = LineColor;
+        tm.color = new Color(0.3f, 0.3f, 0.35f);
         tm.text = text;
         go.GetComponent<MeshRenderer>().sharedMaterial = font.material;
         return tm;
@@ -204,7 +216,8 @@ public class ShogiGame : MonoBehaviour
             new Vector2(-0.31f, -0.36f), new Vector2(0.31f, -0.36f), new Vector2(0.26f, 0.2f),
             new Vector2(0f, 0.36f), new Vector2(-0.26f, 0.2f),
         };
-        float half = 0.06f;
+        float half = PieceHalf;
+        s *= PieceScale;
         var verts = new List<Vector3>();
         var tris = new List<int>();
         void Tri(Vector3 a, Vector3 b, Vector3 c, Vector3 outward)
@@ -261,7 +274,7 @@ public class ShogiGame : MonoBehaviour
         promoteDialog.SetActive(false);
         legal = state.GenerateLegalMoves();
         focusLayer = mode == 1 ? 8 : 0;
-        yaw = mode == 1 ? 180f : 0f;
+        yaw = mode == 1 ? 180f - 35f : -35f;
         Refresh();
         MaybeStartCpu();
     }
@@ -433,12 +446,7 @@ public class ShogiGame : MonoBehaviour
         var rot = Quaternion.Euler(pitch, yaw, 0f);
         cam.transform.rotation = rot;
         cam.transform.position = rot * new Vector3(0f, 0f, -distance);
-        // 駒はいつもカメラの方を向ける（後手の駒は逆さま）
-        foreach (var t in pieceObjects)
-        {
-            bool gote = t.name == "1";
-            t.rotation = cam.transform.rotation * (gote ? Quaternion.Euler(0f, 0f, 180f) : Quaternion.identity);
-        }
+        foreach (var t in billboards) t.rotation = cam.transform.rotation;
     }
 
     void ClickBoard(Vector2 screenPos)
@@ -504,9 +512,11 @@ public class ShogiGame : MonoBehaviour
             int owner = Piece.Owner(p);
             bool dim = focusOnly && ShogiState.Z(i) != focusLayer && i != selectedFrom && !targets.Contains(i);
 
-            var go = new GameObject(owner.ToString()); // 名前で先手・後手を見分ける（LateUpdate で使う）
+            var go = new GameObject("Piece");
             go.transform.SetParent(pieceRoot, false);
             go.transform.position = CellPos(i);
+            // 寝かせて表を上に。先手は奥（+Z）向き、後手は手前向き
+            go.transform.rotation = Quaternion.Euler(90f, owner == 0 ? 0f : 180f, 0f);
             go.transform.localScale = Vector3.one * (dim ? 0.45f : 1f);
             go.AddComponent<MeshFilter>().sharedMesh = PieceMesh(type);
             var r = go.AddComponent<MeshRenderer>();
@@ -517,16 +527,16 @@ public class ShogiGame : MonoBehaviour
             if (i == checkSq) c = CheckColor;
             SetColor(r, c);
             var col = go.AddComponent<BoxCollider>();
-            col.size = new Vector3(0.62f, 0.72f, 0.14f);
+            col.size = new Vector3(0.62f * PieceScale, 0.72f * PieceScale, PieceHalf * 2f + 0.02f);
             colliderToCell[col] = i;
 
             var label = new GameObject("Char");
             label.transform.SetParent(go.transform, false);
-            label.transform.localPosition = new Vector3(0f, -0.03f, -0.065f);
+            label.transform.localPosition = new Vector3(0f, -0.04f * PieceScale, -PieceHalf - 0.005f);
             var tm = label.AddComponent<TextMesh>();
             tm.font = font;
             tm.fontSize = 64;
-            tm.characterSize = type == PieceType.King ? 0.065f : 0.055f;
+            tm.characterSize = (type == PieceType.King ? 0.065f : 0.055f) * PieceScale;
             tm.anchor = TextAnchor.MiddleCenter;
             tm.alignment = TextAlignment.Center;
             tm.text = ShogiState.PieceChar(p);
