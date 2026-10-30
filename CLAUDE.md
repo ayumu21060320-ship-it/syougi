@@ -5,7 +5,8 @@ Unity で作る将棋ゲーム。**1人で制作している。**
 
 ## エンジン
 Unity <版は未定。決まったら 6000.x.xfx のように書く>。決めた後は**版を上げない**（上げるときは本人に聞く）。
-リポジトリの一番上が Unity プロジェクトの一番上（`Assets/` `Packages/` `ProjectSettings/` を置く）。
+Unity プロジェクトは `My project/` フォルダ。Git に入れるのはその中の `Assets/` `Packages/` `ProjectSettings/` だけ
+（`Library/` `Temp/` `Logs/` `UserSettings/` などは Unity が自動で作るので `.gitignore` で除外）。
 
 ## 毎回やること
 - 作業を始めるとき: `git pull`。衝突したら、どちらを残すか本人に聞く（勝手に片方を消さない）
