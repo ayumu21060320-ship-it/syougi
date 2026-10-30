@@ -68,6 +68,8 @@ public class ShogiGame : MonoBehaviour
     Material pieceTextMat; // 駒の文字（手前の駒に隠れる）
     AudioSource audioSource;
     AudioClip komaSound;   // 駒を置く音
+    AudioSource bgmSource; // BGM（くり返し流す）
+    bool bgmOn = true;
     MaterialPropertyBlock mpb;
     Transform pieceRoot, gridRoot;
     TextMesh layerLabel;
@@ -80,7 +82,7 @@ public class ShogiGame : MonoBehaviour
     float yaw = -35f, pitch = 38f, distance = 20f;
 
     // ---- UI ----
-    Text statusText, kifuText, modeText, levelText, layerText, focusText;
+    Text statusText, kifuText, modeText, levelText, layerText, focusText, bgmText;
     // 右の 2D の盤（見ている層を普通の将棋盤の形で表示する。クリックでも指せる）
     const float BoardCell = 44f;
     Text layerBoardTitle;
@@ -479,6 +481,34 @@ public class ShogiGame : MonoBehaviour
         foreach (var c in clips) if (c.name == "KomaOto") komaSound = c;
         if (komaSound == null && clips.Length > 0) komaSound = clips[0];
         if (komaSound == null) komaSound = MakeKomaSound();
+
+        // BGM: Assets/Resources/BGM/ に曲のファイル（.wav / .mp3 / .ogg）を置けばくり返し流す（名前は何でもよい。最初の 1 つ）
+        bgmSource = gameObject.AddComponent<AudioSource>();
+        bgmSource.playOnAwake = false;
+        bgmSource.loop = true;
+        bgmSource.volume = 0.35f; // 効果音が聞こえるように控えめ
+        var bgms = Resources.LoadAll<AudioClip>("BGM");
+        if (bgms.Length > 0) bgmSource.clip = bgms[0];
+        bgmOn = PlayerPrefs.GetInt("bgmOn", 1) == 1; // オン・オフは次に起動したときも覚えておく
+        UpdateBgm();
+    }
+
+    void UpdateBgm()
+    {
+        if (bgmSource.clip != null)
+        {
+            if (bgmOn && !bgmSource.isPlaying) bgmSource.Play();
+            if (!bgmOn && bgmSource.isPlaying) bgmSource.Pause();
+        }
+        if (bgmText != null)
+            bgmText.text = bgmSource.clip == null ? "BGM: 曲なし（Resources/BGM に置く）" : bgmOn ? "BGM: オン" : "BGM: オフ";
+    }
+
+    void ToggleBgm()
+    {
+        bgmOn = !bgmOn;
+        PlayerPrefs.SetInt("bgmOn", bgmOn ? 1 : 0);
+        UpdateBgm();
     }
 
     void PlayKomaSound(bool capture)
@@ -888,6 +918,7 @@ public class ShogiGame : MonoBehaviour
         layerText = MakeText(row4, "", 20, TextAnchor.MiddleCenter, 40, 170);
         MakeButton(row4, "▲", 50, () => ChangeLayer(1), Wood);
         focusText = MakeButton(MakeRow(left), "", 388, () => { focusOnly = !focusOnly; Refresh(); }, Wood);
+        bgmText = MakeButton(MakeRow(left), "", 388, ToggleBgm, Wood);
         MakeText(left, "☗先手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
         handRows[0] = MakeRow(left);
         MakeText(left, "☖後手の持ち駒", 20, TextAnchor.MiddleLeft, 28);
