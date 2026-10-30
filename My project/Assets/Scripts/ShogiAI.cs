@@ -119,7 +119,7 @@ namespace Shogi3D
                 otherDrops.RemoveAt(j);
             }
 
-            int qDepth = level == 1 ? 1 : level == 2 ? 2 : 4;
+            int qDepth = level == 1 ? 1 : level == 2 ? 2 : 3;
             int noise = level == 1 ? 150 : 20; // 同じ局面でも毎回同じ手にならないように
             Move best = candidates[0];
             int bestScore = int.MinValue;
