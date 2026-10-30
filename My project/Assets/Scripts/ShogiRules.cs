@@ -176,26 +176,26 @@ namespace Shogi3D
         public static ShogiState Initial()
         {
             var s = new ShogiState();
-            var line = new[] { PieceType.Lance, PieceType.Knight, PieceType.Silver, PieceType.Gold, PieceType.King,
+            // 普通の将棋の最初の 3 段を、9 つの段それぞれに並べる（片側 180 枚）
+            var line = new[] { PieceType.Lance, PieceType.Knight, PieceType.Silver, PieceType.Gold, PieceType.Gold,
                                PieceType.Gold, PieceType.Silver, PieceType.Knight, PieceType.Lance };
             for (int owner = 0; owner < 2; owner++)
             {
                 int Layer(int rel) { return owner == 0 ? rel : 8 - rel; }
-                for (int k = 0; k < 9; k++)
+                for (int y = 0; y < 9; y++)
                 {
-                    // 1層: 五段の横一列と 5筋の縦一列（十字）
-                    s.Board[Index(k, 4, Layer(0))] = Piece.Make(line[k], owner, false);
-                    s.Board[Index(4, k, Layer(0))] = Piece.Make(line[k], owner, false);
-                    // 3層: 歩を同じ十字に
-                    s.Board[Index(k, 4, Layer(2))] = Piece.Make(PieceType.Pawn, owner, false);
-                    s.Board[Index(4, k, Layer(2))] = Piece.Make(PieceType.Pawn, owner, false);
+                    for (int x = 0; x < 9; x++)
+                    {
+                        // 1層: 香桂銀金○金銀桂香（○は五段だけ玉、ほかは金）
+                        var t = (x == 4 && y == 4) ? PieceType.King : line[x];
+                        s.Board[Index(x, y, Layer(0))] = Piece.Make(t, owner, false);
+                        // 3層: 全部歩
+                        s.Board[Index(x, y, Layer(2))] = Piece.Make(PieceType.Pawn, owner, false);
+                    }
+                    // 2層: 8筋に角、2筋に飛（筋 = 9 - x）
+                    s.Board[Index(9 - 8, y, Layer(1))] = Piece.Make(PieceType.Bishop, owner, false);
+                    s.Board[Index(9 - 2, y, Layer(1))] = Piece.Make(PieceType.Rook, owner, false);
                 }
-                // 2層: 飛 5二・5八、角 8五・2五（筋 = 9 - x、段 = y + 1）
-                // 3層の歩の十字の真下に置き、最初から相手の飛角と筋が通らないようにする
-                s.Board[Index(9 - 5, 1, Layer(1))] = Piece.Make(PieceType.Rook, owner, false);
-                s.Board[Index(9 - 5, 7, Layer(1))] = Piece.Make(PieceType.Rook, owner, false);
-                s.Board[Index(9 - 8, 4, Layer(1))] = Piece.Make(PieceType.Bishop, owner, false);
-                s.Board[Index(9 - 2, 4, Layer(1))] = Piece.Make(PieceType.Bishop, owner, false);
             }
             s.RecomputeHash();
             return s;
